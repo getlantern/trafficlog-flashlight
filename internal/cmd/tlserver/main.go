@@ -1,0 +1,89 @@
+// Command tlserver starts a traffic log server. This server uses HTTP over Unix domain sockets and
+// authenticates peers using authipc. Specifically, peer processes must be running code signed with
+// the com.getlantern.lantern identifier and a trusted anchor. This server is macOS only.
+package main
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/getlantern/authipc"
+	"github.com/getlantern/trafficlog"
+	"github.com/getlantern/trafficlog/tlhttp"
+)
+
+// Peers must be running code signed with this identifier. This is hard-coded as otherwise someone
+// could simply run the server with an identifier of their choosing.
+const requiredPeerSigningID = "com.getlantern.lantern"
+
+var (
+	socketFile    = flag.String("socket-file", "", "file to listen on; should not exist")
+	captureBytes  = flag.Int("capture-bytes", 0, "size of the capture buffer")
+	saveBytes     = flag.Int("save-bytes", 0, "size of the save buffer")
+	mtuLimit      = flag.Int("mtu-limit", trafficlog.DefaultMaxMTU, "largest acceptable MTU")
+	statsInterval = flag.Duration("stats-interval", trafficlog.DefaultStatsInterval, "print stats at this rate")
+	stripAppLayer = flag.Bool("strip-app-layer", false, "strip application-layer data")
+	errorPrefix   = flag.String("error-prefix", "", "prefix for error logs")
+	statsPrefix   = flag.String("stats-prefix", "", "prefix for stat logs")
+)
+
+func logError(a ...interface{}) {
+	fmt.Fprintln(os.Stderr, a...)
+}
+
+func fail(a ...interface{}) {
+	logError(a...)
+	os.Exit(1)
+}
+
+func main() {
+	flag.Parse()
+	if *captureBytes == 0 {
+		fail("capture-bytes must be provided")
+	}
+	if *saveBytes == 0 {
+		fail("save-bytes must be provided")
+	}
+
+	var mutator trafficlog.MutatorFactory = new(trafficlog.NoOpFactory)
+	if *stripAppLayer {
+		mutator = new(trafficlog.AppStripperFactory)
+	}
+
+	tl := trafficlog.New(*captureBytes, *saveBytes, &trafficlog.Options{
+		MTULimit:       *mtuLimit,
+		StatsInterval:  *statsInterval,
+		MutatorFactory: mutator,
+	})
+	go func() {
+		for {
+			select {
+			case err := <-tl.Errors():
+				fmt.Fprintf(os.Stderr, "%s%v\n", *errorPrefix, err)
+			case stats := <-tl.Stats():
+				b, err := json.Marshal(stats)
+				if err != nil {
+					err := fmt.Errorf("failed to marshal stats: %w", err)
+					fmt.Fprintf(os.Stderr, "%s%v\n", *errorPrefix, err)
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "%s%s\n", *statsPrefix, string(b))
+			}
+		}
+	}()
+
+	// Note that we do not need to set an address as we are communicating over Unix domain sockets.
+	s := http.Server{Handler: tlhttp.RequestHandler(tl, os.Stderr)}
+	l, err := authipc.Listen(*socketFile, authipc.NewSigningIDVerifier(requiredPeerSigningID))
+	if err != nil {
+		fail("failed to start authipc listener")
+	}
+	defer l.Close()
+
+	fmt.Fprintln(os.Stdout, "Starting server at", l.Addr().String())
+	log.Fatal(s.Serve(l))
+}

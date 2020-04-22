@@ -287,7 +287,9 @@ func newClient(socketFile string, timeout time.Duration) tlhttp.Client {
 	// Note that we do not need to configure a server address as we are communicating over Unix
 	// domain sockets using the input file.
 	return tlhttp.Client{
-		Scheme: "http",
+		// The address does not matter, but the http library complains without one.
+		ServerAddress: "tlproc",
+		Scheme:        "http",
 		HTTPClient: http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {

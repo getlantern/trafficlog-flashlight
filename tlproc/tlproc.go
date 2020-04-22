@@ -2,7 +2,8 @@
 // the parent process does not have proper permissions for packet capture.
 //
 // This package is currently macOS only. The parent process must be running code signed with the
-// com.getlantern.lantern identifier and a trusted anchor.
+// com.getlantern.lantern identifier and a trusted anchor. Build with the tag 'debug' to create
+// traffic log processes which skip peer verification.
 package tlproc
 
 import (
@@ -284,8 +285,6 @@ func newSocketFile() (string, error) {
 }
 
 func newClient(socketFile string, timeout time.Duration) tlhttp.Client {
-	// Note that we do not need to configure a server address as we are communicating over Unix
-	// domain sockets using the input file.
 	return tlhttp.Client{
 		// The address does not matter, but the http library complains without one.
 		ServerAddress: "tlproc",

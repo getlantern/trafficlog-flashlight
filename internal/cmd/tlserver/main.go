@@ -20,6 +20,9 @@ import (
 // could simply run the server with an identifier of their choosing.
 const requiredPeerSigningID = "com.getlantern.lantern"
 
+// Set to true or build with '-tags debug' to disable peer authentication.
+var debugBuild = false
+
 var (
 	socketFile    = flag.String("socket-file", "", "file to listen on; should not exist")
 	captureBytes  = flag.Int("capture-bytes", 0, "size of the capture buffer")
@@ -78,7 +81,12 @@ func main() {
 
 	// Note that we do not need to set an address as we are communicating over Unix domain sockets.
 	s := http.Server{Handler: tlhttp.RequestHandler(tl, os.Stderr)}
-	l, err := authipc.Listen(*socketFile, authipc.NewSigningIDVerifier(requiredPeerSigningID))
+	v := authipc.NewSigningIDVerifier(requiredPeerSigningID)
+	if debugBuild {
+		fmt.Fprintln(os.Stdout, "WARNING: this is a debug build; peer authentication is disabled")
+		v = func(_ authipc.ProcessInfo) error { return nil }
+	}
+	l, err := authipc.Listen(*socketFile, v)
 	if err != nil {
 		fail("failed to start authipc listener")
 	}

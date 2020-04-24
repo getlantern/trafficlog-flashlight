@@ -222,6 +222,8 @@ func (p *TrafficLogProcess) Close() error {
 	p.closeOnce.Do(func() {
 		close(p.closed)
 		err = p.proc.Kill()
+		close(p.errC)
+		close(p.statsC)
 	})
 	return err
 }
@@ -245,7 +247,6 @@ func (p *TrafficLogProcess) watchStderr(stderr io.Reader) {
 			// Other messages are sometimes printed, but we don't care about these.
 		}
 	}
-	// TODO: check that this routine returns if the process is killed
 }
 
 func (p *TrafficLogProcess) sendError(err error) {

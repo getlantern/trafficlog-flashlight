@@ -5,11 +5,14 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"sync"
 
 	"github.com/getlantern/authipc"
 	"github.com/getlantern/trafficlog"
@@ -41,6 +44,42 @@ func logError(a ...interface{}) {
 func fail(a ...interface{}) {
 	logError(a...)
 	os.Exit(1)
+}
+
+type loggingConn struct {
+	*authipc.Conn
+	logAuthFailureOnce sync.Once
+}
+
+func (lc *loggingConn) Read(b []byte) (n int, err error) {
+	n, err = lc.Conn.Read(b)
+	if err != nil && errors.As(err, new(authipc.AuthError)) {
+		lc.logAuthFailureOnce.Do(func() { fmt.Fprintln(os.Stderr, err) })
+	}
+	return
+}
+
+func (lc *loggingConn) Write(b []byte) (n int, err error) {
+	n, err = lc.Conn.Write(b)
+	if err != nil && errors.As(err, new(authipc.AuthError)) {
+		lc.logAuthFailureOnce.Do(func() { fmt.Fprint(os.Stderr, err) })
+	}
+	return
+}
+
+type loggingListener struct {
+	net.Listener
+}
+
+func (l loggingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return c, err
+	}
+	if authConn, ok := c.(*authipc.Conn); ok {
+		return &loggingConn{Conn: authConn}, nil
+	}
+	return c, err
 }
 
 func main() {
@@ -88,10 +127,10 @@ func main() {
 	}
 	l, err := authipc.Listen(*socketFile, v)
 	if err != nil {
-		fail("failed to start authipc listener")
+		fail("failed to start authipc listener:", err)
 	}
 	defer l.Close()
 
 	fmt.Fprintln(os.Stdout, "Starting server at", l.Addr().String())
-	log.Fatal(s.Serve(l))
+	log.Fatal(s.Serve(loggingListener{l}))
 }

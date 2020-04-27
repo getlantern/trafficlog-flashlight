@@ -8,6 +8,7 @@ package tlproc
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -154,6 +155,7 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		fmt.Sprintf("-strip-app-layer=%t", stripAppLayer),
 	)
 	client := newClient(socket, opts.requestTimeout())
+
 	cmdStderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to process stderr: %w", err)
@@ -163,10 +165,12 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 	}
 
 	var (
-		errC     = make(chan error, channelBufferSize)
-		statsC   = make(chan trafficlog.CaptureStats, channelBufferSize)
-		serverUp = make(chan struct{})
-		closed   = make(chan struct{})
+		errC         = make(chan error, channelBufferSize)
+		statsC       = make(chan trafficlog.CaptureStats, channelBufferSize)
+		serverUp     = make(chan struct{})
+		closed       = make(chan struct{})
+		stderrBuf    = new(bytes.Buffer)
+		stderrCopier = newCopier(cmdStderr, stderrBuf)
 	)
 	go func() {
 		err := cmd.Wait()
@@ -176,7 +180,13 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		select {
 		case <-closed:
 		default:
+			// TODO: this could result in send on closed channel
 			errC <- fmt.Errorf("process died: %w", err)
+		}
+	}()
+	go func() {
+		if err := stderrCopier.copy(); err != nil {
+			stderrBuf.WriteString(fmt.Sprintf("error reading stderr: %v", err))
 		}
 	}()
 	go func() {
@@ -189,18 +199,19 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		}
 	}()
 
-	// TODO: it would be nice to return stderr in the following failure modes
-
 	select {
 	case err := <-errC:
+		stderrCopier.stop()
 		cmd.Process.Kill()
-		return nil, err
+		return nil, fmt.Errorf("error starting process: %w; stderr: %s", err, stderrBuf.String())
 	case <-time.After(opts.startTimeout()):
+		stderrCopier.stop()
 		cmd.Process.Kill()
-		return nil, errors.New("timed out waiting for process to start")
+		return nil, fmt.Errorf("timed out waiting for process to start; stderr: %s", stderrBuf.String())
 	case <-serverUp:
 		p := TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Once{}}
-		go p.watchStderr(cmdStderr)
+		stderrCopier.stop()
+		go p.watchStderr(io.MultiReader(stderrBuf, cmdStderr))
 		return &p, nil
 	}
 }
@@ -300,4 +311,36 @@ func newClient(socketFile string, timeout time.Duration) tlhttp.Client {
 			Timeout: timeout,
 		},
 	}
+}
+
+type copier struct {
+	from  io.Reader
+	to    io.Writer
+	stopC chan struct{}
+}
+
+func newCopier(from io.Reader, to io.Writer) copier {
+	return copier{from, to, make(chan struct{})}
+}
+
+func (c copier) copy() error {
+	for {
+		select {
+		case <-c.stopC:
+			return nil
+		default:
+			buf := make([]byte, 100)
+			n, err := c.from.Read(buf)
+			if err != nil {
+				return fmt.Errorf("read error: %w", err)
+			}
+			if _, err := c.to.Write(buf[:n]); err != nil {
+				return fmt.Errorf("write error: %w", err)
+			}
+		}
+	}
+}
+
+func (c copier) stop() {
+	close(c.stopC)
 }

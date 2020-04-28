@@ -35,7 +35,7 @@ $(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver
 		$(BIN_DIR)/debug/darwin/amd64
 
 tlproc/tlproc.test: $(EMBED_DIR)/* $(shell find . -name *.go) go.mod go.sum
-	@go test -c -o ./tlproc/tlproc.test -tags debug ./tlproc
+	@go test -race -c -o ./tlproc/tlproc.test -tags debug ./tlproc
 
 test: tlproc/tlproc.test
 	@echo "These tests require elevated permissions; you may be prompted for your password."

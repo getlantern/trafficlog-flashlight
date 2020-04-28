@@ -155,7 +155,6 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		fmt.Sprintf("-strip-app-layer=%t", stripAppLayer),
 	)
 	client := newClient(socket, opts.requestTimeout())
-
 	cmdStderr, err := cmd.StderrPipe()
 	if err != nil {
 		return nil, fmt.Errorf("failed to attach to process stderr: %w", err)
@@ -169,7 +168,7 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		statsC       = make(chan trafficlog.CaptureStats, channelBufferSize)
 		serverUp     = make(chan struct{})
 		closed       = make(chan struct{})
-		stderrBuf    = new(bytes.Buffer)
+		stderrBuf    = new(syncBuf)
 		stderrCopier = newCopier(cmdStderr, stderrBuf)
 	)
 	go func() {
@@ -186,7 +185,8 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 	}()
 	go func() {
 		if err := stderrCopier.copy(); err != nil && !errors.Is(err, os.ErrClosed) {
-			stderrBuf.WriteString(fmt.Sprintf("error reading stderr: %v", err))
+			// TODO: could this result in send on closed channel?
+			errC <- fmt.Errorf("error reading stderr: %w", err)
 		}
 	}()
 	go func() {
@@ -201,22 +201,18 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 
 	select {
 	case err := <-errC:
-		stderrCopier.stop()
 		cmd.Process.Kill()
+		stderrCopier.stop()
 		return nil, fmt.Errorf("error starting process: %w; stderr: %s", err, stderrBuf.String())
 	case <-time.After(opts.startTimeout()):
-		stderrCopier.stop()
 		cmd.Process.Kill()
+		stderrCopier.stop()
 		return nil, fmt.Errorf("timed out waiting for process to start; stderr: %s", stderrBuf.String())
 	case <-serverUp:
-		stderrCopier.stop()
-		cmdStderr, err := cmd.StderrPipe()
-		if err != nil {
-			cmd.Process.Kill()
-			return nil, fmt.Errorf("failed to attach to process stderr: %w", err)
-		}
+		rPipe, wPipe := io.Pipe()
+		stderrCopier.switchWriter(wPipe)
 		p := TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Once{}}
-		go p.watchStderr(io.MultiReader(stderrBuf, cmdStderr))
+		go p.watchStderr(io.MultiReader(stderrBuf, rPipe))
 		return &p, nil
 	}
 }
@@ -318,31 +314,74 @@ func newClient(socketFile string, timeout time.Duration) tlhttp.Client {
 	}
 }
 
+// Zero value is ready-to-go.
+type syncBuf struct {
+	buf bytes.Buffer
+	sync.Mutex
+}
+
+func (sb *syncBuf) Read(b []byte) (n int, err error) {
+	sb.Lock()
+	n, err = sb.buf.Write(b)
+	sb.Unlock()
+	return
+}
+
+func (sb *syncBuf) Write(b []byte) (n int, err error) {
+	sb.Lock()
+	n, err = sb.buf.Write(b)
+	sb.Unlock()
+	return
+}
+
+func (sb *syncBuf) String() string {
+	sb.Lock()
+	defer sb.Unlock()
+	return sb.buf.String()
+}
+
 type copier struct {
-	from    io.ReadCloser
-	to      io.Writer
-	stopped chan struct{}
+	from  io.Reader
+	to    io.Writer
+	stopC chan struct{}
+	sync.Mutex
 }
 
-func newCopier(from io.ReadCloser, to io.Writer) copier {
-	return copier{from, to, make(chan struct{})}
+func newCopier(from io.Reader, to io.Writer) copier {
+	return copier{from, to, make(chan struct{}), sync.Mutex{}}
 }
 
-func (c copier) copy() error {
-	defer close(c.stopped)
+func (c *copier) copy() error {
+	protectedWrite := func(b []byte) (n int, err error) {
+		c.Lock()
+		n, err = c.to.Write(b)
+		c.Unlock()
+		return
+	}
+
+	buf := make([]byte, 100)
 	for {
-		buf := make([]byte, 100)
 		n, err := c.from.Read(buf)
 		if err != nil {
 			return fmt.Errorf("read error: %w", err)
 		}
-		if _, err := c.to.Write(buf[:n]); err != nil {
-			return fmt.Errorf("write error: %w", err)
+		select {
+		case <-c.stopC:
+			return nil
+		default:
+			if _, err := protectedWrite(buf[:n]); err != nil {
+				return fmt.Errorf("write error: %w", err)
+			}
 		}
 	}
 }
 
-func (c copier) stop() {
-	c.from.Close()
-	<-c.stopped
+func (c *copier) switchWriter(w io.Writer) {
+	c.Lock()
+	c.to = w
+	c.Unlock()
+}
+
+func (c *copier) stop() {
+	close(c.stopC)
 }

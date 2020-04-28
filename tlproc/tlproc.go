@@ -185,7 +185,7 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		}
 	}()
 	go func() {
-		if err := stderrCopier.copy(); err != nil {
+		if err := stderrCopier.copy(); err != nil && !errors.Is(err, os.ErrClosed) {
 			stderrBuf.WriteString(fmt.Sprintf("error reading stderr: %v", err))
 		}
 	}()
@@ -209,8 +209,13 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		cmd.Process.Kill()
 		return nil, fmt.Errorf("timed out waiting for process to start; stderr: %s", stderrBuf.String())
 	case <-serverUp:
-		p := TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Once{}}
 		stderrCopier.stop()
+		cmdStderr, err := cmd.StderrPipe()
+		if err != nil {
+			cmd.Process.Kill()
+			return nil, fmt.Errorf("failed to attach to process stderr: %w", err)
+		}
+		p := TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Once{}}
 		go p.watchStderr(io.MultiReader(stderrBuf, cmdStderr))
 		return &p, nil
 	}
@@ -314,33 +319,30 @@ func newClient(socketFile string, timeout time.Duration) tlhttp.Client {
 }
 
 type copier struct {
-	from  io.Reader
-	to    io.Writer
-	stopC chan struct{}
+	from    io.ReadCloser
+	to      io.Writer
+	stopped chan struct{}
 }
 
-func newCopier(from io.Reader, to io.Writer) copier {
+func newCopier(from io.ReadCloser, to io.Writer) copier {
 	return copier{from, to, make(chan struct{})}
 }
 
 func (c copier) copy() error {
+	defer close(c.stopped)
 	for {
-		select {
-		case <-c.stopC:
-			return nil
-		default:
-			buf := make([]byte, 100)
-			n, err := c.from.Read(buf)
-			if err != nil {
-				return fmt.Errorf("read error: %w", err)
-			}
-			if _, err := c.to.Write(buf[:n]); err != nil {
-				return fmt.Errorf("write error: %w", err)
-			}
+		buf := make([]byte, 100)
+		n, err := c.from.Read(buf)
+		if err != nil {
+			return fmt.Errorf("read error: %w", err)
+		}
+		if _, err := c.to.Write(buf[:n]); err != nil {
+			return fmt.Errorf("write error: %w", err)
 		}
 	}
 }
 
 func (c copier) stop() {
-	close(c.stopC)
+	c.from.Close()
+	<-c.stopped
 }

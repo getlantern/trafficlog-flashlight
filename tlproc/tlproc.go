@@ -340,7 +340,7 @@ type syncBuf struct {
 
 func (sb *syncBuf) Read(b []byte) (n int, err error) {
 	sb.Lock()
-	n, err = sb.buf.Write(b)
+	n, err = sb.buf.Read(b)
 	sb.Unlock()
 	return
 }

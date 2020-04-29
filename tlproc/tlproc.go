@@ -113,11 +113,11 @@ func (opts Options) statsInterval() time.Duration {
 type TrafficLogProcess struct {
 	tlhttp.Client
 
-	proc      *os.Process
-	errC      chan error
-	statsC    chan trafficlog.CaptureStats
-	closed    chan struct{}
-	closeOnce sync.Once
+	proc     *os.Process
+	errC     chan error
+	statsC   chan trafficlog.CaptureStats
+	closed   chan struct{}
+	closedMx sync.Mutex
 }
 
 // New traffic log process. The current process must be running code signed with the
@@ -126,6 +126,15 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 	if opts == nil {
 		opts = &Options{}
 	}
+
+	// TODO: install binary if necessary:
+	//	- create access_bpf group
+	//	- assign /dev/bpf* to access_bpf group
+	//	- assign binary to access_bfp group
+	//	- set setgid on binary
+	//
+	// We will need permissions for this and we will want to minimize the number of times we have to
+	// do this.
 
 	tlserverBinary, err := tlserverbin.Asset("tlserver")
 	if err != nil {
@@ -170,23 +179,18 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 		closed       = make(chan struct{})
 		stderrBuf    = new(syncBuf)
 		stderrCopier = newCopier(cmdStderr, stderrBuf)
+		p            = TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Mutex{}}
 	)
 	go func() {
 		err := cmd.Wait()
 		if err == nil {
 			return
 		}
-		select {
-		case <-closed:
-		default:
-			// TODO: this could result in send on closed channel
-			errC <- fmt.Errorf("process died: %w", err)
-		}
+		p.sendError(fmt.Errorf("process died: %w", err))
 	}()
 	go func() {
 		if err := stderrCopier.copy(); err != nil && !errors.Is(err, os.ErrClosed) {
-			// TODO: could this result in send on closed channel?
-			errC <- fmt.Errorf("error reading stderr: %w", err)
+			p.sendError(fmt.Errorf("error reading stderr: %w", err))
 		}
 	}()
 	go func() {
@@ -211,7 +215,6 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 	case <-serverUp:
 		rPipe, wPipe := io.Pipe()
 		stderrCopier.switchWriter(wPipe)
-		p := TrafficLogProcess{client, cmd.Process, errC, statsC, closed, sync.Once{}}
 		go p.watchStderr(io.MultiReader(stderrBuf, rPipe))
 		return &p, nil
 	}
@@ -230,14 +233,17 @@ func (p *TrafficLogProcess) Stats() <-chan trafficlog.CaptureStats {
 
 // Close kills the traffic log process. This function will always return nil after the first call.
 func (p *TrafficLogProcess) Close() error {
-	var err error
-	p.closeOnce.Do(func() {
+	p.closedMx.Lock()
+	defer p.closedMx.Unlock()
+	select {
+	case <-p.closed:
 		close(p.closed)
-		err = p.proc.Kill()
 		close(p.errC)
 		close(p.statsC)
-	})
-	return err
+		return p.proc.Kill()
+	default:
+		return nil
+	}
 }
 
 func (p *TrafficLogProcess) watchStderr(stderr io.Reader) {
@@ -262,16 +268,28 @@ func (p *TrafficLogProcess) watchStderr(stderr io.Reader) {
 }
 
 func (p *TrafficLogProcess) sendError(err error) {
+	p.closedMx.Lock()
+	defer p.closedMx.Unlock()
 	select {
-	case p.errC <- err:
+	case <-p.closed:
 	default:
+		select {
+		case p.errC <- err:
+		default:
+		}
 	}
 }
 
 func (p *TrafficLogProcess) sendStats(stats trafficlog.CaptureStats) {
+	p.closedMx.Lock()
+	defer p.closedMx.Unlock()
 	select {
-	case p.statsC <- stats:
+	case <-p.closed:
 	default:
+		select {
+		case p.statsC <- stats:
+		default:
+		}
 	}
 }
 

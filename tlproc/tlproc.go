@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/getlantern/byteexec"
+	"github.com/getlantern/golog"
 	"github.com/getlantern/trafficlog"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 	"github.com/getlantern/trafficlog/tlhttp"
@@ -42,6 +43,8 @@ const (
 
 // DefaultRequestTimeout is used when Options.RequestTimeout is not set.
 const DefaultRequestTimeout = 5 * time.Second
+
+var log = golog.LoggerFor("trafficlog-flashlight.tlproc")
 
 // Options for launching a traffic log process.
 type Options struct {
@@ -126,15 +129,6 @@ func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error)
 	if opts == nil {
 		opts = &Options{}
 	}
-
-	// TODO: install binary if necessary:
-	//	- create access_bpf group
-	//	- assign /dev/bpf* to access_bpf group
-	//	- assign binary to access_bfp group
-	//	- set setgid on binary
-	//
-	// We will need permissions for this and we will want to minimize the number of times we have to
-	// do this.
 
 	tlserverBinary, err := tlserverbin.Asset("tlserver")
 	if err != nil {

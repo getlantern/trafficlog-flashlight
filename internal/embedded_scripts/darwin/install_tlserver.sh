@@ -25,7 +25,7 @@ next_free_gid() {
 
 
 # We have a "test" flag, implemented a bit crudely.
-if [ $1 == "-t" ] || [ $1 == "--test" ]
+if [ "$1" == "-t" ] || [ "$1" == "--test" ]
 then
   TEST_MODE=true
   echo "running in test mode"

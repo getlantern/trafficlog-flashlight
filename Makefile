@@ -3,6 +3,7 @@ TLSERVER_DIR := internal/cmd/tlserver
 TLSERVER_SRCS := $(shell find $(TLSERVER_DIR) -name "*.go") go.mod go.sum
 BIN_DIR := $(TLSERVER_DIR)/binaries
 SCRIPTS_DIR := internal/embedded_scripts
+SCRIPTS := $(shell find $(SCRIPTS_DIR) -type f -name "*")
 EMBED_DIR := internal/tlserverbin
 STAGING_DIR := staging
 
@@ -22,7 +23,7 @@ $(BIN_DIR)/debug/darwin/amd64/tlserver: $(TLSERVER_SRCS)
 		-tags debug \
 		./$(TLSERVER_DIR)
 
-$(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR)
+$(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(SCRIPTS)
 	@cp $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR)/tlserver
 	@cp $(SCRIPTS_DIR)/darwin/install_tlserver.sh $(STAGING_DIR)/install_tlserver.sh
 	go-bindata \
@@ -32,7 +33,7 @@ $(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DI
 		-tags !debug \
 		$(STAGING_DIR)
 
-$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR)
+$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR) $(SCRIPTS)
 	@cp $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR)/tlserver
 	@cp $(SCRIPTS_DIR)/darwin/install_tlserver.sh $(STAGING_DIR)/install_tlserver.sh
 	go-bindata \

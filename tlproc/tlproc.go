@@ -130,6 +130,8 @@ type TrafficLogProcess struct {
 // system is properly configured for packet capture. When testing, Install can be skipped if the
 // caller is confident that the system is already properly configured.
 func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error) {
+	// TODO: byteexec appears to always overwrite the binary, undoing changes made on install
+
 	if opts == nil {
 		opts = &Options{}
 	}

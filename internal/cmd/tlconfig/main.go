@@ -1,5 +1,5 @@
-// Command installer is used to install tlserver, ensuring that system permissions are configured
-// properly for packet capture.
+// Command tlconfig is used when installing tlserver, ensuring that system permissions are
+// configured properly for packet capture.
 //
 // Expects two arguments: the first should be the path to the binary and the second should be the
 // user for which tlserver is being installed. The test flag (-test) can be used to check that the
@@ -75,7 +75,7 @@ func createGroup(name string) (*user.Group, error) {
 	return g, nil
 }
 
-func install(binary, username string, testMode bool) error {
+func configure(binary, username string, testMode bool) error {
 	userAccount, err := user.Lookup(username)
 	if err != nil {
 		return fmt.Errorf("failed to look up user: %w", err)
@@ -196,14 +196,14 @@ func main() {
 		fail("expects two arguments: the path to the binary and the user")
 	}
 	binPath, username := args[0], args[1]
-	if err := install(binPath, username, *testMode); err != nil {
+	if err := configure(binPath, username, *testMode); err != nil {
 		// TODO: print stderr if included in err (e.g. is exec.ExitError)
 		fail(err)
 	}
 	if !*testMode {
-		if err := install(binPath, username, true); err != nil {
+		if err := configure(binPath, username, true); err != nil {
 			// TODO: print stderr if included in err  (e.g. is exec.ExitError)
-			fail("unexpected installation failure:", err)
+			fail("unexpected configuration failure:", err)
 		}
 	}
 }

@@ -4,7 +4,7 @@ TLSERVER_SRCS := $(shell find $(TLSERVER_DIR) -name "*.go") go.mod go.sum
 BIN_DIR := $(TLSERVER_DIR)/binaries
 EMBED_DIR := internal/tlserverbin
 STAGING_DIR := build-staging
-DARWIN_INSTALLER := $(STAGING_DIR)/installer
+TLCONFIG := $(STAGING_DIR)/tlconfig
 
 all: $(EMBED_DIR)/*
 .PHONY: test clean
@@ -14,8 +14,8 @@ all: $(EMBED_DIR)/*
 $(STAGING_DIR):
 	@mkdir $(STAGING_DIR)
 
-$(DARWIN_INSTALLER): $(shell find internal/cmd/installer -name "*.go") $(STAGING_DIR)
-	go build -o $(DARWIN_INSTALLER) ./internal/cmd/installer
+$(TLCONFIG): $(shell find internal/cmd/tlconfig -name "*.go") $(STAGING_DIR)
+	go build -o $(TLCONFIG) ./internal/cmd/tlconfig
 
 $(BIN_DIR)/darwin/amd64/tlserver: $(TLSERVER_SRCS)
 	GOOS=darwin GOARCH=amd64 go build \
@@ -28,7 +28,7 @@ $(BIN_DIR)/debug/darwin/amd64/tlserver: $(TLSERVER_SRCS)
 		-tags debug \
 		./$(TLSERVER_DIR)
 
-$(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(DARWIN_INSTALLER)
+$(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG)
 	@cp $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR)
 	go-bindata \
 		-pkg tlserverbin \
@@ -37,7 +37,7 @@ $(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DI
 		-tags !debug \
 		$(STAGING_DIR)
 
-$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR) $(DARWIN_INSTALLER)
+$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG)
 	@cp $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR)
 	go-bindata \
 		-pkg tlserverbin \

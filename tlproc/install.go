@@ -1,6 +1,7 @@
 package tlproc
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io/ioutil"
@@ -16,32 +17,51 @@ import (
 // installed at the given path and if the necessary system changes have already been made. If
 // installation or any system changes are necessary, the prompt and icon will be used to ask the
 // user for elevated permissions. Otherwise, this function is a no-op.
-func Install(path, user, prompt, iconPath string) error {
+//
+// If the binary already exists at the input path, but is outdated, it will be overwritten iff
+// overwrite is true. Note that this will result in the user being re-prompted for permissions as
+// the new binary will not inherit permissions of the old binary.
+func Install(path, user, prompt, iconPath string, overwrite bool) error {
+	// TODO: return a special error when the user refuses to grant permission
+
+	tlserverBinary, err := tlserverbin.Asset("tlserver")
+	if err != nil {
+		return fmt.Errorf("failed to load tlserver binary: %w", err)
+	}
+	if err := writeFile(tlserverBinary, path, overwrite); err != nil {
+		return fmt.Errorf("failed to write tlserver binary: %w", err)
+	}
+
 	tmpDir, err := ioutil.TempDir("", "lantern_tmp_resources")
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir for install binary: %w", err)
+		return fmt.Errorf("failed to create temp dir for tlconfig binary: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
-	installBinary, err := tlserverbin.Asset("installer")
+
+	configBinary, err := tlserverbin.Asset("tlconfig")
 	if err != nil {
-		return fmt.Errorf("failed to load install binary: %w", err)
+		return fmt.Errorf("failed to load tlconfig binary: %w", err)
 	}
-	installExec, err := byteexec.New(installBinary, fmt.Sprintf("%s/tlserver_installer", tmpDir))
+	configExec, err := byteexec.New(configBinary, fmt.Sprintf("%s/tlconfig", tmpDir))
 	if err != nil {
-		return fmt.Errorf("failed to write install binary to disk: %w", err)
+		return fmt.Errorf("failed to write tlconfig binary to disk: %w", err)
 	}
+
+	// Check existing system configuration.
 	var exitErr *exec.ExitError
-	output, err := installExec.Command("-test", path, user).CombinedOutput()
+	output, err := configExec.Command("-test", path, user).CombinedOutput()
 	if err != nil && errors.As(err, &exitErr) {
-		log.Debugf("install script found changes necessary:\n%s", string(output))
+		log.Debugf("tlconfig found changes necessary:\n%s", string(output))
 	} else if err != nil {
-		return fmt.Errorf("failed to run install script with -test flag: %w", err)
+		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	} else {
-		log.Debugf("install script found no necessary changes:\n%s", string(output))
+		log.Debugf("tlconfig found no necessary changes:\n%s", string(output))
 		return nil
 	}
-	installCmd := elevate.WithPrompt(prompt).WithIcon(iconPath)
-	output, err = installCmd.Command(installExec.Filename, path, user).CombinedOutput()
+
+	// Configure system.
+	configCmd := elevate.WithPrompt(prompt).WithIcon(iconPath)
+	output, err = configCmd.Command(configExec.Filename, path, user).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, string(output))
 	}
@@ -50,5 +70,35 @@ func Install(path, user, prompt, iconPath string) error {
 		successLog = fmt.Sprintf("%s:\n%s", successLog, string(output))
 	}
 	log.Debug(successLog)
+	return nil
+}
+
+// Writes to the path if:
+//	no such file exists || (existing file differs && overwrite)
+func writeFile(contents []byte, path string, overwrite bool) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0744)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		if err := ioutil.WriteFile(path, contents, 0744); err != nil {
+			return fmt.Errorf("failed to create and write: %w", err)
+		}
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to open for reading: %w", err)
+	}
+	defer f.Close()
+
+	if !overwrite {
+		return nil
+	}
+	current, err := ioutil.ReadAll(f)
+	if err != nil {
+		return fmt.Errorf("failed to read: %w", err)
+	}
+	if bytes.Equal(current, contents) {
+		return nil
+	}
+	if _, err := f.WriteAt(contents, 0); err != nil {
+		return fmt.Errorf("failed to overwrite: %w", err)
+	}
 	return nil
 }

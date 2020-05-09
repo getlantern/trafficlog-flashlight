@@ -31,8 +31,8 @@ import (
 const (
 	bpfGroup = "access_bpf"
 
-	// We define proper permissions as having only the user-execute bit and the setgid bit.
-	binPermissions = os.ModeSetgid | 0100
+	// We define proper permissions as having user rwx and the setgid bit.
+	binPermissions = os.ModeSetgid | 0700
 )
 
 var (

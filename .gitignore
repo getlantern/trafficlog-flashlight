@@ -1,3 +1,3 @@
 internal/cmd/tlserver/binaries
-tlproc/tlproc.test
+tlproc/test-binary
 build-staging

@@ -27,7 +27,6 @@ import (
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/golog"
 	"github.com/getlantern/trafficlog"
-	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 	"github.com/getlantern/trafficlog/tlhttp"
 )
 
@@ -50,13 +49,6 @@ var log = golog.LoggerFor("trafficlog-flashlight.tlproc")
 type Options struct {
 	trafficlog.Options
 
-	// PathToExecutable defines the path to the traffic log executable. If the executable does not
-	// already exist at this location, it will be created by New.
-	//
-	// If no path is specified, a file named 'tlproc' will be placed in the default location used by
-	// github.com/getlantern/byteexec.New.
-	PathToExecutable string
-
 	// StartTimeout is the maximum amount of time to wait for the process to start. If unspecified,
 	// no timeout will be applied.
 	StartTimeout time.Duration
@@ -64,14 +56,6 @@ type Options struct {
 	// RequestTimeout is applied to every request made of the traffic log process. If unspecified,
 	// DefaultRequestTimeout will be used.
 	RequestTimeout time.Duration
-}
-
-func (opts Options) pathToExecutable() string {
-	if opts.PathToExecutable == "" {
-		// This will be treated as a relative path and placed in byteexec's default directory.
-		return "tlproc"
-	}
-	return opts.PathToExecutable
 }
 
 func (opts Options) startTimeout() time.Duration {
@@ -124,23 +108,23 @@ type TrafficLogProcess struct {
 }
 
 // New traffic log process. The current process must be running code signed with the
-// "com.getlantern.lantern" identifier and a trusted anchor.
+// "com.getlantern.lantern" identifier and a trusted anchor. execPath specifies the path to the
+// executable and should match the path previously provided to Install.
 //
-// In production (on a user's machine), Install should always be called first. This ensures that the
-// system is properly configured for packet capture. When testing, Install can be skipped if the
-// caller is confident that the system is already properly configured.
-func New(captureBytes, saveBytes int, opts *Options) (*TrafficLogProcess, error) {
-	// TODO: byteexec appears to always overwrite the binary, undoing changes made on install
-
+// Install must be invoked before the first call to New on a given machine. Installations persist
+// across runtimes.
+func New(captureBytes, saveBytes int, execPath string, opts *Options) (*TrafficLogProcess, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
-
-	tlserverBinary, err := tlserverbin.Asset("tlserver")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load trafficlog binary: %w", err)
+	_, err := os.Stat(execPath)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		return nil, errors.New("executable does not exist at provided path")
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to stat executable: %w", err)
 	}
-	tlserver, err := byteexec.New(tlserverBinary, opts.pathToExecutable())
+
+	tlserver, err := byteexec.Existing(execPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create executable: %w", err)
 	}

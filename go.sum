@@ -4,6 +4,8 @@ github.com/getlantern/authipc v0.1.0 h1:3N8+bgjvctOj28GZtulVPg7xm2I+klZA0u0uoAD5
 github.com/getlantern/authipc v0.1.0/go.mod h1:nDXd7xyGPMbPwEi4QAL3PPMzvwSFYbQxzk4ipANL25M=
 github.com/getlantern/byteexec v0.0.0-20170405023437-4cfb26ec74f4 h1:Nqmy8i81dzokjNHpyOg24gnQBeGRF7D51m8HmBRNn0Y=
 github.com/getlantern/byteexec v0.0.0-20170405023437-4cfb26ec74f4/go.mod h1:4WCQkaCIwta0KlF9bQZA1jYqp8bzIS2PeCqjnef8nZ8=
+github.com/getlantern/byteexec v0.0.0-20200509011419-2f5ed5531ada h1:Vu59s7BACSJCyIeVZX4x1cOfoPXgvohVsYKOqoYkYu0=
+github.com/getlantern/byteexec v0.0.0-20200509011419-2f5ed5531ada/go.mod h1:4WCQkaCIwta0KlF9bQZA1jYqp8bzIS2PeCqjnef8nZ8=
 github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 h1:NRUJuo3v3WGC/g5YiyF790gut6oQr5f3FBI88Wv0dx4=
 github.com/getlantern/context v0.0.0-20190109183933-c447772a6520/go.mod h1:L+mq6/vvYHKjCX2oez0CgEAJmbq1fbb/oNJIWQkBybY=
 github.com/getlantern/elevate v0.0.0-20200430163644-2881a121236d h1:o0EHYAq7u9/umRZE0PpJ00GYQvxPxVUvtoDkUca2guQ=

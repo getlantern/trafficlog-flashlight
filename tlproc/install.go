@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/elevate"
@@ -42,7 +43,7 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to load tlconfig binary: %w", err)
 	}
-	configExec, err := byteexec.New(configBinary, fmt.Sprintf("%s/tlconfig", tmpDir))
+	configExec, err := byteexec.New(configBinary, filepath.Join(tmpDir, "tlconfig"))
 	if err != nil {
 		return fmt.Errorf("failed to write tlconfig binary to disk: %w", err)
 	}

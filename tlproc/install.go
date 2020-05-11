@@ -11,6 +11,7 @@ import (
 
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/elevate"
+	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 )
 
@@ -51,9 +52,12 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 	// Check existing system configuration.
 	var exitErr *exec.ExitError
 	output, err := configExec.Command("-test", path, user).CombinedOutput()
-	if err != nil && errors.As(err, &exitErr) {
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
 		log.Debugf("tlconfig found changes necessary:\n%s", string(output))
 	} else if err != nil {
+		if len(output) > 0 {
+			err = fmt.Errorf("%w; output: %s", err, string(output))
+		}
 		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	} else {
 		log.Debugf("tlconfig found no necessary changes:\n%s", string(output))

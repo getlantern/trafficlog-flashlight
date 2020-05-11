@@ -19,14 +19,14 @@ import (
 	"regexp"
 	"strconv"
 	"syscall"
+
+	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
 )
 
 // TODO: may need to force-create BPF devices. See:
 // https://github.com/wireshark/wireshark/blob/master/packaging/macosx/ChmodBPF/root/Library/Application%20Support/Wireshark/ChmodBPF/ChmodBPF
 
 // TODO: may need to install a launch daemon alá Wireshark's ChmodBPF
-
-// TODO: coordinate exit codes with tlproc
 
 const (
 	bpfGroup = "access_bpf"
@@ -57,9 +57,50 @@ func (e errorFailedCheck) Error() string {
 	return e.msg
 }
 
-func fail(a ...interface{}) {
-	fmt.Fprintln(os.Stderr, a...)
-	os.Exit(1)
+type errorBadInput struct {
+	msg   string
+	cause error
+}
+
+func badInput(msg string, cause error) errorBadInput {
+	return errorBadInput{msg, cause}
+}
+
+func (e errorBadInput) Error() string {
+	if e.cause == nil {
+		return e.msg
+	}
+	return fmt.Sprintf("%s: %v", e.msg, e.cause)
+}
+
+func (e errorBadInput) Unwrap() error {
+	return e.cause
+}
+
+// Most errors are treated as an unexpected failure, but this allows us to ensure this for an error
+// which may currently be of type errorBadInput or errorFailedCheck.
+type errorUnexpectedFailure struct {
+	msg string
+}
+
+func unexpectedFailure(msg string) errorUnexpectedFailure {
+	return errorUnexpectedFailure{msg}
+}
+
+func (e errorUnexpectedFailure) Error() string {
+	return e.msg
+}
+
+func fail(err error) {
+	fmt.Fprintln(os.Stderr, err)
+	switch {
+	case errors.As(err, new(errorBadInput)):
+		os.Exit(tlconfigexit.CodeBadInput)
+	case errors.As(err, new(errorFailedCheck)):
+		os.Exit(tlconfigexit.CodeFailedCheck)
+	default:
+		os.Exit(tlconfigexit.CodeUnexpectedFailure)
+	}
 }
 
 func createGroup(name string) (*user.Group, error) {
@@ -79,11 +120,11 @@ func createGroup(name string) (*user.Group, error) {
 func configure(binary, username string, testMode bool) error {
 	userAccount, err := user.Lookup(username)
 	if err != nil {
-		return fmt.Errorf("failed to look up user: %w", err)
+		return badInput("failed to look up user", err)
 	}
 	binInfo, err := os.Stat(binary)
 	if err != nil {
-		return fmt.Errorf("failed to stat binary: %w", err)
+		return badInput("failed to stat binary", err)
 	}
 	binStatT, ok := binInfo.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -97,7 +138,6 @@ func configure(binary, username string, testMode bool) error {
 	case err == nil:
 		// Nothing to do.
 	case !errors.As(err, new(user.UnknownGroupError)):
-		fmt.Printf("error type: %T\n", err)
 		return fmt.Errorf("failed to look up %s: %w", bpfGroup, err)
 	case errors.As(err, new(user.UnknownGroupError)) && testMode:
 		return failedCheckf("%s does not exist", bpfGroup)
@@ -194,13 +234,13 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) < 2 {
-		fail("expects two arguments: the path to the binary and the user")
+		fail(badInput("expects two arguments: the path to the binary and the user", nil))
 	}
 	binPath, username := args[0], args[1]
 	if err := configure(binPath, username, *testMode); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			fail(fmt.Sprintf("%s: %s", err.Error(), string(exitErr.Stderr)))
+			fail(fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr)))
 		}
 		fail(err)
 	}
@@ -211,7 +251,7 @@ func main() {
 			if errors.As(err, &exitErr) {
 				errMsg = fmt.Sprintf("%s: %s", errMsg, string(exitErr.Stderr))
 			}
-			fail("unexpected configuration failure:", errMsg)
+			fail(unexpectedFailure(fmt.Sprint("unexpected configuration failure: ", errMsg)))
 		}
 	}
 }

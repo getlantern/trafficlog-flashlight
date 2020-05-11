@@ -5,6 +5,7 @@ BIN_DIR := $(TLSERVER_DIR)/binaries
 EMBED_DIR := internal/tlserverbin
 STAGING_DIR := build-staging
 TLCONFIG := $(STAGING_DIR)/tlconfig
+TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/tlconfigexit -name "*.go")
 
 all: $(EMBED_DIR)/*
 .PHONY: test clean
@@ -14,7 +15,7 @@ all: $(EMBED_DIR)/*
 $(STAGING_DIR):
 	@mkdir $(STAGING_DIR)
 
-$(TLCONFIG): $(shell find internal/cmd/tlconfig -name "*.go") $(STAGING_DIR)
+$(TLCONFIG): $(TLCONFIG_SRCS) $(STAGING_DIR)
 	go build -o $(TLCONFIG) ./internal/cmd/tlconfig
 
 $(BIN_DIR)/darwin/amd64/tlserver: $(TLSERVER_SRCS)

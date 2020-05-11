@@ -8,12 +8,28 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/elevate"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 )
+
+// A PermissionError is returned by Install when the user denies permission to the installer upon
+// being prompted. This is currently only supported on macOS.
+type PermissionError struct {
+	cause error
+}
+
+func (e PermissionError) Error() string {
+	return "user denied permission"
+}
+
+// Unwrap allows for Go 1.13-style error unwrapping.
+func (e PermissionError) Unwrap() error {
+	return e.cause
+}
 
 // Install the traffic log server. This function first checks to see if the server binary is already
 // installed at the given path and if the necessary system changes have already been made. If
@@ -23,9 +39,9 @@ import (
 // If the binary already exists at the input path, but is outdated, it will be overwritten iff
 // overwrite is true. Note that this will result in the user being re-prompted for permissions as
 // the new binary will not inherit permissions of the old binary.
+//
+// On supported platforms, a PermissionError is returned when the user denies permission.
 func Install(path, user, prompt, iconPath string, overwrite bool) error {
-	// TODO: return a special error when the user refuses to grant permission
-
 	tlserverBinary, err := tlserverbin.Asset("tlserver")
 	if err != nil {
 		return fmt.Errorf("failed to load tlserver binary: %w", err)
@@ -56,7 +72,7 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 		log.Debugf("tlconfig found changes necessary:\n%s", string(output))
 	} else if err != nil {
 		if len(output) > 0 {
-			err = fmt.Errorf("%w; output: %s", err, string(output))
+			err = fmt.Errorf("%w: %s", err, string(output))
 		}
 		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	} else {
@@ -65,11 +81,14 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 	}
 
 	// Configure system.
-	configCmd := elevate.WithPrompt(prompt).WithIcon(iconPath)
-	output, err = configCmd.Command(configExec.Filename, path, user).CombinedOutput()
+	output, err = elevateCommand(prompt, iconPath, configExec.Filename, path, user)
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, string(output))
+		if len(output) > 0 {
+			err = fmt.Errorf("%w: %s", err, string(output))
+		}
+		return fmt.Errorf("failed to run tlconfig: %w", err)
 	}
+
 	successLog := "tlserver installed successfully"
 	if len(output) > 0 {
 		successLog = fmt.Sprintf("%s:\n%s", successLog, string(output))
@@ -106,4 +125,25 @@ func writeFile(contents []byte, path string, overwrite bool) error {
 		return fmt.Errorf("failed to overwrite: %w", err)
 	}
 	return nil
+}
+
+// Prompts the user for permission and returns the combined stdout and stderr. On supported
+// platforms, a PermissionError is returned when the user denies permission.
+func elevateCommand(prompt, icon, command string, args ...string) ([]byte, error) {
+	cmd := elevate.WithPrompt(prompt).WithIcon(icon)
+	out, err := cmd.Command(command, args...).CombinedOutput()
+	if err != nil && isPermissionError(err) {
+		return out, PermissionError{err}
+	}
+	return out, err
+}
+
+func isPermissionError(elevateErr error) bool {
+	if runtime.GOOS != "darwin" {
+		log.Debugf("unable to decode elevate errors on %s", runtime.GOOS)
+		return false
+	}
+
+	var exitErr *exec.ExitError
+	return errors.As(elevateErr, &exitErr)
 }

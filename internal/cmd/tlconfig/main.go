@@ -64,7 +64,8 @@ func fail(a ...interface{}) {
 
 func createGroup(name string) (*user.Group, error) {
 	cmd := exec.Command("dseditgroup", "-o", "create", "-r", name, name)
-	if err := cmd.Run(); err != nil {
+	// We use cmd.Output over cmd.Run to populate err.Stderr.
+	if _, err := cmd.Output(); err != nil {
 		return nil, err
 	}
 	g, err := user.LookupGroup(name)
@@ -197,13 +198,20 @@ func main() {
 	}
 	binPath, username := args[0], args[1]
 	if err := configure(binPath, username, *testMode); err != nil {
-		// TODO: print stderr if included in err (e.g. is exec.ExitError)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			fail(fmt.Sprintf("%s: %s", err.Error(), string(exitErr.Stderr)))
+		}
 		fail(err)
 	}
 	if !*testMode {
 		if err := configure(binPath, username, true); err != nil {
-			// TODO: print stderr if included in err  (e.g. is exec.ExitError)
-			fail("unexpected configuration failure:", err)
+			errMsg := err.Error()
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				errMsg = fmt.Sprintf("%s: %s", errMsg, string(exitErr.Stderr))
+			}
+			fail("unexpected configuration failure:", errMsg)
 		}
 	}
 }

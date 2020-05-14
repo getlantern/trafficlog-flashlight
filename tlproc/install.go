@@ -16,20 +16,9 @@ import (
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 )
 
-// A PermissionError is returned by Install when the user denies permission to the installer upon
+// ErrPermissionDenied is returned by Install when the user denies permission to the installer upon
 // being prompted. This is currently only supported on macOS.
-type PermissionError struct {
-	cause error
-}
-
-func (e PermissionError) Error() string {
-	return "user denied permission"
-}
-
-// Unwrap allows for Go 1.13-style error unwrapping.
-func (e PermissionError) Unwrap() error {
-	return e.cause
-}
+var ErrPermissionDenied = errors.New("user denied permission")
 
 // Install the traffic log server. This function first checks to see if the server binary is already
 // installed at the given path and if the necessary system changes have already been made. If
@@ -89,6 +78,8 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 		return fmt.Errorf("failed to run tlconfig: %w", err)
 	}
 
+	// TODO: we don't actually know this without consulting the output of the command (since
+	// cocoasudo obscures the exit code).
 	successLog := "tlserver installed successfully"
 	if len(output) > 0 {
 		successLog = fmt.Sprintf("%s:\n%s", successLog, string(output))
@@ -133,7 +124,7 @@ func elevateCommand(prompt, icon, command string, args ...string) ([]byte, error
 	cmd := elevate.WithPrompt(prompt).WithIcon(icon)
 	out, err := cmd.Command(command, args...).CombinedOutput()
 	if err != nil && isPermissionError(err) {
-		return out, PermissionError{err}
+		return out, ErrPermissionDenied
 	}
 	return out, err
 }
@@ -144,6 +135,9 @@ func isPermissionError(elevateErr error) bool {
 		return false
 	}
 
+	// On macOS, elevate will return an exec.ExitError in 2 scenarios: (1) if the binary does not
+	// exist or (2) if the user hits "cancel" when prompted for permissions. Because we create the
+	// binary ourselves, we can be reasonably sure that this is the second case.
 	var exitErr *exec.ExitError
 	return errors.As(elevateErr, &exitErr)
 }

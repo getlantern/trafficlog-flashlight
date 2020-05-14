@@ -78,8 +78,19 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 		return fmt.Errorf("failed to run tlconfig: %w", err)
 	}
 
-	// TODO: we don't actually know this without consulting the output of the command (since
-	// cocoasudo obscures the exit code).
+	// On macOS, elevate will obscure the exit code of the command, so we can't actually know if
+	// the tlconfig ran successfully. We check manually by running again with -test.
+	output, err = configExec.Command("-test", path, user).CombinedOutput()
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
+		errMsg := "unexpected configuration failure"
+		if len(output) > 0 {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, string(output))
+		}
+		return errors.New(errMsg)
+	} else if err != nil {
+		return fmt.Errorf("failed to check success of tlconfig: %w", err)
+	}
+
 	successLog := "tlserver installed successfully"
 	if len(output) > 0 {
 		successLog = fmt.Sprintf("%s:\n%s", successLog, string(output))

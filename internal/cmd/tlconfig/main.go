@@ -32,7 +32,7 @@ const (
 	bpfGroup = "access_bpf"
 
 	// We define proper permissions as having user rwx and the setgid bit.
-	binPermissions = os.ModeSetgid | 0700
+	properBinPermissions = os.ModeSetgid | 0700
 )
 
 var (
@@ -219,12 +219,20 @@ func configure(binary, username string, testMode bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to stat binary: %w", err)
 	}
-	if binInfo.Mode() != binPermissions {
+	if binInfo.Mode() != properBinPermissions {
 		if testMode {
 			return failedCheckf("%s does not have proper permissions", binary)
 		}
-		if err := os.Chmod(binary, binPermissions); err != nil {
+		if err := os.Chmod(binary, properBinPermissions); err != nil {
 			return fmt.Errorf("failed to assign proper permissions to binary: %w", err)
+		}
+		// chmod (even run directly) can silently fail to flip the setgid bit.
+		binInfo, err = os.Stat(binary)
+		if err != nil {
+			return fmt.Errorf("failed to stat binary to check chmod success: %w", err)
+		}
+		if binInfo.Mode() != properBinPermissions {
+			return fmt.Errorf("failed to assign proper permissions to binary (silent chmod failure)")
 		}
 	}
 	return nil
@@ -243,15 +251,5 @@ func main() {
 			fail(fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr)))
 		}
 		fail(err)
-	}
-	if !*testMode {
-		if err := configure(binPath, username, true); err != nil {
-			errMsg := err.Error()
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
-				errMsg = fmt.Sprintf("%s: %s", errMsg, string(exitErr.Stderr))
-			}
-			fail(unexpectedFailure(fmt.Sprint("unexpected configuration failure: ", errMsg)))
-		}
 	}
 }

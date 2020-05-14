@@ -77,20 +77,6 @@ func (e errorBadInput) Unwrap() error {
 	return e.cause
 }
 
-// Most errors are treated as an unexpected failure, but this allows us to ensure this for an error
-// which may currently be of type errorBadInput or errorFailedCheck.
-type errorUnexpectedFailure struct {
-	msg string
-}
-
-func unexpectedFailure(msg string) errorUnexpectedFailure {
-	return errorUnexpectedFailure{msg}
-}
-
-func (e errorUnexpectedFailure) Error() string {
-	return e.msg
-}
-
 func fail(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	switch {

@@ -5,12 +5,17 @@ BIN_DIR := $(TLSERVER_DIR)/binaries
 EMBED_DIR := internal/tlserverbin
 STAGING_DIR := build-staging
 TLCONFIG := $(STAGING_DIR)/tlconfig
-TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/tlconfigexit -name "*.go")
+TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/tlconfigexit -name "*.go") go.mod go.sum
 
 all: $(EMBED_DIR)/*
 .PHONY: test clean
 
-# TODO: embedded binaries need to be signed
+define osxcodesign
+	codesign --options runtime --strict --timestamp --force \
+		-r="designated => anchor trusted and identifier com.getlantern.lantern" \
+		-s "Developer ID Application: Innovate Labs LLC (4FYC28AXA2)" \
+		$(1)
+endef
 
 $(STAGING_DIR):
 	@mkdir $(STAGING_DIR)
@@ -31,6 +36,8 @@ $(BIN_DIR)/debug/darwin/amd64/tlserver: $(TLSERVER_SRCS)
 
 $(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG)
 	@cp $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR)
+	$(call osxcodesign,$(STAGING_DIR)/tlserver)
+	$(call osxcodesign,$(TLCONFIG))
 	go-bindata \
 		-pkg tlserverbin \
 		-o $(EMBED_DIR)/tlsb_darwin_amd64.go \

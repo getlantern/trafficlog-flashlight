@@ -13,7 +13,7 @@ all: $(EMBED_DIR)/*
 define osxcodesign
 	codesign --options runtime --strict --timestamp --force \
 		-r="designated => anchor trusted and identifier com.getlantern.lantern" \
-		-s "Developer ID Application: Innovate Labs LLC (4FYC28AXA2)" \
+		-s "Apple Development: Harry Harpham (FKV2T87YA5)" \
 		$(1)
 endef
 

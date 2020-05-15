@@ -18,7 +18,7 @@ define osxcodesign
 endef
 
 $(STAGING_DIR):
-	@mkdir $(STAGING_DIR)
+	@mkdir $(STAGING_DIR) 2> /dev/null | true
 
 $(TLCONFIG): $(TLCONFIG_SRCS) $(STAGING_DIR)
 	go build -o $(TLCONFIG) ./internal/cmd/tlconfig

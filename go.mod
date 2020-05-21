@@ -3,7 +3,7 @@ module github.com/getlantern/trafficlog-flashlight
 go 1.13
 
 require (
-	github.com/getlantern/authipc v0.1.0
+	github.com/getlantern/authipc v0.2.0
 	github.com/getlantern/byteexec v0.0.0-20200509011419-2f5ed5531ada
 	github.com/getlantern/elevate v0.0.0-20200430163644-2881a121236d
 	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7

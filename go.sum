@@ -2,6 +2,8 @@ github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/getlantern/authipc v0.1.0 h1:3N8+bgjvctOj28GZtulVPg7xm2I+klZA0u0uoAD5gLA=
 github.com/getlantern/authipc v0.1.0/go.mod h1:nDXd7xyGPMbPwEi4QAL3PPMzvwSFYbQxzk4ipANL25M=
+github.com/getlantern/authipc v0.2.0 h1:aAlYBn1tizjbBbXmknoalU7P+tlNqGAHroTptKvXMnk=
+github.com/getlantern/authipc v0.2.0/go.mod h1:nDXd7xyGPMbPwEi4QAL3PPMzvwSFYbQxzk4ipANL25M=
 github.com/getlantern/byteexec v0.0.0-20170405023437-4cfb26ec74f4 h1:Nqmy8i81dzokjNHpyOg24gnQBeGRF7D51m8HmBRNn0Y=
 github.com/getlantern/byteexec v0.0.0-20170405023437-4cfb26ec74f4/go.mod h1:4WCQkaCIwta0KlF9bQZA1jYqp8bzIS2PeCqjnef8nZ8=
 github.com/getlantern/byteexec v0.0.0-20200509011419-2f5ed5531ada h1:Vu59s7BACSJCyIeVZX4x1cOfoPXgvohVsYKOqoYkYu0=

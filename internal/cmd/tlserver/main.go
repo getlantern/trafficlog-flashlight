@@ -19,9 +19,9 @@ import (
 	"github.com/getlantern/trafficlog/tlhttp"
 )
 
-// Peers must be running code signed with this identifier. This is hard-coded as otherwise someone
-// could simply run the server with an identifier of their choosing.
-const requiredPeerSigningID = "com.getlantern.lantern"
+// Peers must be running code signed with the Lantern developer certificate. This is hard-coded as
+// otherwise someone could simply run the server with a common name of their choosing.
+const lanternCertCommonName = "Developer ID Application: Innovate Labs LLC (4FYC28AXA2)"
 
 // Set to true or build with '-tags debug' to disable peer authentication.
 var debugBuild = false
@@ -120,7 +120,7 @@ func main() {
 
 	// Note that we do not need to set an address as we are communicating over Unix domain sockets.
 	s := http.Server{Handler: tlhttp.RequestHandler(tl, os.Stderr)}
-	v := authipc.NewSigningIDVerifier(requiredPeerSigningID)
+	v := authipc.NewSignerVerifier(lanternCertCommonName)
 	if debugBuild {
 		fmt.Fprintln(os.Stdout, "WARNING: this is a debug build; peer authentication is disabled")
 		v = func(_ authipc.ProcessInfo) error { return nil }

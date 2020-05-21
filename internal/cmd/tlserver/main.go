@@ -91,6 +91,10 @@ func main() {
 		fail("save-bytes must be provided")
 	}
 
+	// Testing binary sizes
+	// TODO: delete me
+	configure("", "", false)
+
 	var mutator trafficlog.MutatorFactory = new(trafficlog.NoOpFactory)
 	if *stripAppLayer {
 		mutator = new(trafficlog.AppStripperFactory)

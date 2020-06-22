@@ -18,27 +18,29 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
 )
 
-// TODO: may need to force-create BPF devices. See:
-// https://github.com/wireshark/wireshark/blob/master/packaging/macosx/ChmodBPF/root/Library/Application%20Support/Wireshark/ChmodBPF/ChmodBPF
-
 // TODO: may need to install a launch daemon alá Wireshark's ChmodBPF
+// 	- Think about whether we still need test mode in this scenario
 
 const (
 	bpfGroup = "access_bpf"
 
 	// We define proper permissions as having user rwx and the setgid bit.
 	properBinPermissions = os.ModeSetgid | 0700
+
+	// The maximum number of BPF devices we will create, subject to system constraints.
+	maxCreatedDevices = 256
 )
 
 var (
 	testMode = flag.Bool("test", false, "make no changes, just check the current installation")
 
-	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf[0-9]+$")
+	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
 )
 
 type errorFailedCheck struct {
@@ -103,6 +105,31 @@ func createGroup(name string) (*user.Group, error) {
 	return g, nil
 }
 
+func getMaxBPFDevices() (int, error) {
+	out, err := exec.Command("sysctl", "-n", "debug.bpf_maxdevices").Output()
+	if err != nil {
+		return 0, fmt.Errorf("failed to run sysctl utility: %w", err)
+	}
+	sysctlMax, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse sysctl output as integer: %w", err)
+	}
+	if sysctlMax < maxCreatedDevices {
+		return sysctlMax, nil
+	}
+	return maxCreatedDevices, nil
+}
+
+func triggerNextBPFDevice(currentDevice int) error {
+	// The command used to trigger device creation is taken from Wireshark's ChmodBPF utility.
+	// We use exec.Cmd.Output over exec.Cmd.Run to populate err.Stderr.
+	cmd := fmt.Sprintf(": < /dev/bpf%d > /dev/null", currentDevice)
+	if _, err := exec.Command("/bin/sh", "-c", cmd).Output(); err != nil {
+		return err
+	}
+	return nil
+}
+
 func configure(binary, username string, testMode bool) error {
 	userAccount, err := user.Lookup(username)
 	if err != nil {
@@ -149,6 +176,41 @@ func configure(binary, username string, testMode bool) error {
 		}
 		if err := os.Chown(binary, userUID, bpfGID); err != nil {
 			return fmt.Errorf("failed to change binary ownership: %w", err)
+		}
+	}
+
+	// Pre-create BPF devices so that we can assign the group and permissions we'd like. The logic
+	// and reasoning is based on Wireshark's ChmodBPF utility.
+	//
+	// We create devices on a best-effort basis, ignoring most errors that we might come across.
+	startDevice := 0
+	filepath.Walk("/dev", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() && path != "/dev" {
+			return filepath.SkipDir
+		}
+		if submatches := bpfDeviceRegexp.FindStringSubmatch(path); len(submatches) >= 2 {
+			dev, err := strconv.Atoi(submatches[1])
+			if err == nil && dev > startDevice {
+				startDevice = dev
+			}
+		}
+		return nil
+	})
+	endDevice, err := getMaxBPFDevices()
+	if err != nil {
+		return fmt.Errorf("unable to determine max BPF devices: %w", err)
+	}
+	if testMode && startDevice < endDevice {
+		return failedCheckf("need to create %d more BPF devices", endDevice-startDevice)
+	}
+	for i := startDevice; i < endDevice; i++ {
+		if err := triggerNextBPFDevice(i); err != nil {
+			// This error does not mean we should abandon the configuration process, but it does
+			// mean that attempts to create further devices will also fail.
+			break
 		}
 	}
 

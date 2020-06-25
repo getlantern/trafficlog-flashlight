@@ -1,22 +1,26 @@
-// Command tlconfig is used when installing tlserver, ensuring that system permissions are
-// configured properly for packet capture.
+// Command tlconfig is used when installing tlserver, ensuring that the system is properly
+// configured for packet capture. This includes:
+//	- Configuring proper permissions for the config-bpf binary.
+//	- Setting up config-bpf as a launchd user agent.
 //
-// Expects two arguments: the first should be the path to the binary and the second should be the
-// user for which tlserver is being installed. The test flag (-test) can be used to check that the
-// binary is installed and permissions are properly configured.
+// Three arguments are expected:
+//	1) The path to the tlserver binary.
+//	3) The path to the config-bpf binary.
+//	2) The user for which tlserver is being installed.
 //
 // Currently macOS only.
 package main
 
 import (
+	"bytes"
 	"errors"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,10 +28,8 @@ import (
 	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
 )
 
-// TODO: may need to install a launch daemon alá Wireshark's ChmodBPF
-// 	- Think about whether we still need test mode in this scenario
-
 const (
+	// This name is chosen to avoid conflict with existing Wireshark installations.
 	bpfGroup = "access_bpf"
 
 	// We define proper permissions as having user rwx and the setgid bit.
@@ -35,13 +37,52 @@ const (
 
 	// The maximum number of BPF devices we will create, subject to system constraints.
 	maxCreatedDevices = 256
+
+	// Special values representing default values.
+	configBPFParentDir       = "<parent of config-bpf>"
+	configBPFPlistDirDefault = "~/Library/LaunchAgents"
+
+	configBPFLaunchdLabel = "org.getlantern.config-bpf"
 )
 
 var (
-	testMode = flag.Bool("test", false, "make no changes, just check the current installation")
-
-	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
+	testMode          = flag.Bool("test", false, "make no changes, just check the current installation")
+	configBPFOutDir   = flag.String("config-bpf-out", configBPFParentDir, "directory to which stdout and stderr should be written")
+	configBPFPlistDir = flag.String("config-bpf-plist-dir", configBPFPlistDirDefault, "directory containing the plist file")
 )
+
+func init() {
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage:")
+		fmt.Fprintf(flag.CommandLine.Output(), "%s <options> [path/to/tlserver] [path/to/config-bpf] [user]\n", os.Args[0])
+		fmt.Fprintln(flag.CommandLine.Output())
+		fmt.Fprintln(flag.CommandLine.Output(), "Options:")
+		flag.PrintDefaults()
+	}
+}
+
+// The config-bpf utility is installed as a launch agent. This template is filled according to
+// arguments provided at runtime, then placed in ~/Library/LaunchAgents.
+const configBPFLaunchdTmpl = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+	<dict>
+        <key>Label</key>
+        <string>%s</string>
+        <key>Program</key>
+        <string>%s</string>
+        <key>RunAtLoad</key>
+        <true/>
+        <key>StandardOutPath</key>
+        <string>%s/config-bpf.stdout</string>
+        <key>StandardErrorPath</key>
+        <string>%s/config-bpf.stderr</string>
+	</dict>
+</plist>`
+
+func configBPFLaunchdPlistData(configBPFAbsPath, outDir string) []byte {
+	return []byte(fmt.Sprintf(configBPFLaunchdTmpl, configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir))
+}
 
 type errorFailedCheck struct {
 	msg string
@@ -105,48 +146,102 @@ func createGroup(name string) (*user.Group, error) {
 	return g, nil
 }
 
-func getMaxBPFDevices() (int, error) {
-	out, err := exec.Command("sysctl", "-n", "debug.bpf_maxdevices").Output()
-	if err != nil {
-		return 0, fmt.Errorf("failed to run sysctl utility: %w", err)
-	}
-	sysctlMax, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse sysctl output as integer: %w", err)
-	}
-	if sysctlMax < maxCreatedDevices {
-		return sysctlMax, nil
-	}
-	return maxCreatedDevices, nil
+type fileInfo struct {
+	os.FileInfo
+
+	// absolute
+	path string
 }
 
-func triggerNextBPFDevice(currentDevice int) error {
-	// The command used to trigger device creation is taken from Wireshark's ChmodBPF utility.
-	// We use exec.Cmd.Output over exec.Cmd.Run to populate err.Stderr.
-	cmd := fmt.Sprintf(": < /dev/bpf%d > /dev/null", currentDevice)
-	if _, err := exec.Command("/bin/sh", "-c", cmd).Output(); err != nil {
+func stat(path string) (*fileInfo, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("unable to obtain absolute path: %w", err)
+	}
+	return &fileInfo{fi, path}, nil
+}
+
+func (fi *fileInfo) refresh() error {
+	_fi, err := os.Stat(fi.path)
+	if err != nil {
 		return err
+	}
+	fi.FileInfo = _fi
+	return nil
+}
+
+// Assign the binary to the user and group, assign the specified permissions.
+func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode, testMode bool) error {
+	statT, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fmt.Errorf("failed to obtain detailed stat info")
+	}
+	binUID, binGID := int(statT.Uid), int(statT.Gid)
+
+	// Assign to the user and group.
+	userUID, err := strconv.Atoi(u.Uid)
+	if err != nil {
+		return fmt.Errorf("failed to parse UID: %w", err)
+	}
+	bpfGID, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return fmt.Errorf("failed to parse GID: %w", err)
+	}
+	if binUID != userUID || binGID != bpfGID {
+		if testMode {
+			return failedCheckf("not owned by %s and %s", u.Username, bpfGroup)
+		}
+		if err := os.Chown(info.path, userUID, bpfGID); err != nil {
+			return fmt.Errorf("failed to change ownership: %w", err)
+		}
+	}
+
+	// Set specified permissions. We need to stat again because we may have changed ownership.
+	if err := info.refresh(); err != nil {
+		return fmt.Errorf("failed to re-stat: %w", err)
+	}
+	if info.Mode() != perm {
+		if testMode {
+			return failedCheckf("improper permissions: %v", info.Mode())
+		}
+		if err := os.Chmod(info.path, perm); err != nil {
+			return fmt.Errorf("failed to assign proper permissions: %w", err)
+		}
+		// chmod (even run directly) can silently fail to flip the setgid bit.
+		if err := info.refresh(); err != nil {
+			return fmt.Errorf("failed to check chmod success via stat: %w", err)
+		}
+		if info.Mode() != perm {
+			return fmt.Errorf("failed to assign proper permissions: silent chmod failure")
+		}
 	}
 	return nil
 }
 
-func configure(binary, username string, testMode bool) error {
-	userAccount, err := user.Lookup(username)
+func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username string, testMode bool) error {
+	u, err := user.Lookup(username)
 	if err != nil {
 		return badInput("failed to look up user", err)
 	}
-	binInfo, err := os.Stat(binary)
+	tlserverInfo, err := stat(tlserver)
 	if err != nil {
-		return badInput("failed to stat binary", err)
+		return badInput("failed to stat tlserver binary", err)
 	}
-	binStatT, ok := binInfo.Sys().(*syscall.Stat_t)
-	if !ok {
-		return fmt.Errorf("failed to obtain detailed stat info on binary")
+	configBPFInfo, err := stat(configBPF)
+	if err != nil {
+		return badInput("failed to stat config-bpf binary", err)
 	}
-	binUID, binGID := int(binStatT.Uid), int(binStatT.Gid)
+	configBPFOutDirInfo, err := stat(configBPFOutDir)
+	if err != nil {
+		return badInput("failed to stat config-bpf output directory", err)
+	}
 
 	// Create the BPF group.
-	group, err := user.LookupGroup(bpfGroup)
+	g, err := user.LookupGroup(bpfGroup)
 	switch {
 	case err == nil:
 		// Nothing to do.
@@ -155,145 +250,66 @@ func configure(binary, username string, testMode bool) error {
 	case errors.As(err, new(user.UnknownGroupError)) && testMode:
 		return failedCheckf("%s does not exist", bpfGroup)
 	case errors.As(err, new(user.UnknownGroupError)) && !testMode:
-		group, err = createGroup(bpfGroup)
+		g, err = createGroup(bpfGroup)
 		if err != nil {
 			return fmt.Errorf("failed to create %s: %w", bpfGroup, err)
 		}
 	}
 
-	// Assign the binary to the user and the BPF group.
-	userUID, err := strconv.Atoi(userAccount.Uid)
-	if err != nil {
-		return fmt.Errorf("failed to parse UID: %w", err)
-	}
-	bpfGID, err := strconv.Atoi(group.Gid)
-	if err != nil {
-		return fmt.Errorf("failed to parse GID: %w", err)
-	}
-	if binUID != userUID || binGID != bpfGID {
+	if err := configureBinary(*tlserverInfo, *u, *g, properBinPermissions, testMode); err != nil {
 		if testMode {
-			return failedCheckf("binary not owned by %s and %s", username, bpfGroup)
+			return fmt.Errorf("tlserver checks failed: %w", err)
 		}
-		if err := os.Chown(binary, userUID, bpfGID); err != nil {
-			return fmt.Errorf("failed to change binary ownership: %w", err)
-		}
+		return fmt.Errorf("failed to configure tlserver: %w", err)
 	}
-
-	// Pre-create BPF devices so that we can assign the group and permissions we'd like. The logic
-	// and reasoning is based on Wireshark's ChmodBPF utility.
-	//
-	// We create devices on a best-effort basis, ignoring most errors that we might come across.
-	startDevice := 0
-	filepath.Walk("/dev", func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && path != "/dev" {
-			return filepath.SkipDir
-		}
-		if submatches := bpfDeviceRegexp.FindStringSubmatch(path); len(submatches) >= 2 {
-			dev, err := strconv.Atoi(submatches[1])
-			if err == nil && dev > startDevice {
-				startDevice = dev
-			}
-		}
-		return nil
-	})
-	endDevice, err := getMaxBPFDevices()
-	if err != nil {
-		return fmt.Errorf("unable to determine max BPF devices: %w", err)
-	}
-	if testMode && startDevice < endDevice {
-		return failedCheckf("need to create %d more BPF devices", endDevice-startDevice)
-	}
-	for i := startDevice; i < endDevice; i++ {
-		if err := triggerNextBPFDevice(i); err != nil {
-			// This error does not mean we should abandon the configuration process, but it does
-			// mean that attempts to create further devices will also fail.
-			break
-		}
-	}
-
-	// Assign all BPF devices to the BPF group and ensure that all have group read permissions.
-	bpfDevices := []string{}
-	walkFn := func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() && path != "/dev" {
-			return filepath.SkipDir
-		}
-		if bpfDeviceRegexp.MatchString(path) {
-			bpfDevices = append(bpfDevices, path)
-		}
-		return nil
-	}
-	if err := filepath.Walk("/dev", walkFn); err != nil {
-		return fmt.Errorf("failed to walk /dev: %w", err)
-	}
-	if len(bpfDevices) == 0 {
-		return errors.New("found no BPF devices")
-	}
-	for _, dev := range bpfDevices {
-		devInfo, err := os.Stat(dev)
-		if err != nil {
-			return fmt.Errorf("failed to stat %s: %w", dev, err)
-		}
-		devStatT, ok := devInfo.Sys().(*syscall.Stat_t)
-		if !ok {
-			return fmt.Errorf("failed to obtain detailed stat info for %s", dev)
-		}
-		if int(devStatT.Gid) != bpfGID {
-			if testMode {
-				return failedCheckf("%s not owned by %s", dev, bpfGroup)
-			}
-			if err := os.Chown(dev, -1, bpfGID); err != nil {
-				return fmt.Errorf("failed to assign %s to %s: %w", dev, bpfGroup, err)
-			}
-		}
-		var groupRead os.FileMode = 0b100000
-		if devInfo.Mode()&groupRead != groupRead {
-			if testMode {
-				return failedCheckf("%s does not have group read permissions", dev)
-			}
-			if err := os.Chmod(dev, devInfo.Mode()|groupRead); err != nil {
-				return fmt.Errorf("failed to assign group read to %s: %w", dev, err)
-			}
-		}
-	}
-
-	// Set proper permissions for the binary.
-	binInfo, err = os.Stat(binary)
-	if err != nil {
-		return fmt.Errorf("failed to stat binary: %w", err)
-	}
-	if binInfo.Mode() != properBinPermissions {
+	if err := configureBinary(*configBPFInfo, *u, *g, properBinPermissions, testMode); err != nil {
 		if testMode {
-			return failedCheckf("%s does not have proper permissions", binary)
+			return fmt.Errorf("config-bpf checks failed: %w", err)
 		}
-		if err := os.Chmod(binary, properBinPermissions); err != nil {
-			return fmt.Errorf("failed to assign proper permissions to binary: %w", err)
+		return fmt.Errorf("failed to configure config-bpf: %w", err)
+	}
+
+	plistData := configBPFLaunchdPlistData(configBPFInfo.path, configBPFOutDirInfo.path)
+	plistDir := strings.Replace(configBPFPlistDir, "~", u.HomeDir, -1)
+	plistFilename := fmt.Sprintf("%s/%s.plist", plistDir, configBPFLaunchdLabel)
+	if testMode {
+		actualData, err := ioutil.ReadFile(plistFilename)
+		if os.IsNotExist(err) {
+			return failedCheck("no launchd file found for config-bpf")
 		}
-		// chmod (even run directly) can silently fail to flip the setgid bit.
-		binInfo, err = os.Stat(binary)
 		if err != nil {
-			return fmt.Errorf("failed to stat binary to check chmod success: %w", err)
+			return fmt.Errorf("failed to read existing launchd file for config-bpf: %w", err)
 		}
-		if binInfo.Mode() != properBinPermissions {
-			return fmt.Errorf("failed to assign proper permissions to binary (silent chmod failure)")
+		if !bytes.Equal(plistData, actualData) {
+			return failedCheck("existing launchd file for config-bpf differs from expected")
+		}
+	} else {
+		if err := ioutil.WriteFile(plistFilename, plistData, 0644); err != nil {
+			return fmt.Errorf("failed to write config-bpf's launchd file: %w", err)
 		}
 	}
+
 	return nil
 }
 
 func main() {
 	flag.Parse()
 	args := flag.Args()
-	if len(args) < 2 {
-		fail(badInput("expects two arguments: the path to the binary and the user", nil))
+	if len(args) < 3 {
+		flag.Usage()
+		os.Exit(tlconfigexit.CodeBadInput)
 	}
-	binPath, username := args[0], args[1]
-	if err := configure(binPath, username, *testMode); err != nil {
+	tlserverPath, configBPFPath, username := args[0], args[1], args[2]
+	if *configBPFOutDir == configBPFParentDir || *configBPFOutDir == "" {
+		*configBPFOutDir = filepath.Dir(configBPFPath)
+	}
+	if *configBPFPlistDir == "" {
+		*configBPFPlistDir = configBPFPlistDirDefault
+	}
+
+	err := configure(
+		tlserverPath, configBPFPath, *configBPFOutDir, *configBPFPlistDir, username, *testMode)
+	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			fail(fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr)))

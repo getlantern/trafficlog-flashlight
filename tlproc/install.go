@@ -20,43 +20,112 @@ import (
 // being prompted. This is currently only supported on macOS.
 var ErrPermissionDenied = errors.New("user denied permission")
 
-// Install the traffic log server. This function first checks to see if the server binary is already
-// installed at the given path and if the necessary system changes have already been made. If
-// installation or any system changes are necessary, the prompt and icon will be used to ask the
-// user for elevated permissions. Otherwise, this function is a no-op.
+// Used by tests to modify install process. Should not contain -test flag.
+var tlconfigOpts = []string{}
+
+// Represents a tlconfig executable.
+type tlconfigExec struct {
+	*byteexec.Exec
+	args         []string
+	tmpDir       string
+	prompt, icon string
+}
+
+func loadTlconfig() (*tlconfigExec, error) {
+	configBinary, err := tlserverbin.Asset("tlconfig")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load asset: %w", err)
+	}
+	tmpDir, err := ioutil.TempDir("", "lantern_tmp_resources")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir for binary: %w", err)
+	}
+	exec, err := byteexec.New(configBinary, filepath.Join(tmpDir, "tlconfig"))
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("failed to write binary to disk: %w", err)
+	}
+	return &tlconfigExec{Exec: exec, tmpDir: tmpDir}, nil
+}
+
+func (e *tlconfigExec) setArgs(args ...string) {
+	e.args = args
+}
+
+// Run with the input args and returned combined stdout and stderr.
+func (e tlconfigExec) run(opts ...string) ([]byte, error) {
+	var n int
+	args := make([]string, len(tlconfigOpts)+len(opts)+len(e.args))
+	for _, a := range [][]string{tlconfigOpts, opts, e.args} {
+		n += copy(args[n:], a)
+	}
+	if e.prompt != "" {
+		cmd := elevate.WithPrompt(e.prompt).WithIcon(e.icon)
+		out, err := cmd.Command(e.Filename, args...).CombinedOutput()
+		if err != nil && isPermissionError(err) {
+			return out, ErrPermissionDenied
+		}
+		return out, err
+	}
+	return e.Command(args...).CombinedOutput()
+}
+
+// Closing the returned value will also close e.
+func (e tlconfigExec) elevate(prompt, icon string) tlconfigExec {
+	return tlconfigExec{e.Exec, e.args, e.tmpDir, prompt, icon}
+}
+
+func (e tlconfigExec) close() error {
+	return os.RemoveAll(e.tmpDir)
+}
+
+// Install the traffic log server. This package is currently macOS only; calls to Install on other
+// platforms will result in an error.
 //
-// If the binary already exists at the input path, but is outdated, it will be overwritten iff
+// This function first checks to see if the server binary is already installed in the given
+// directory and if the necessary system changes have already been made. If installation or any
+// system changes are necessary, the prompt and icon will be used to ask the user for elevated
+// permissions. Otherwise, this function is a no-op.
+//
+// If the binary already exists in the input directory, but is outdated, it will be overwritten iff
 // overwrite is true. Note that this will result in the user being re-prompted for permissions as
 // the new binary will not inherit permissions of the old binary.
 //
-// On supported platforms, a PermissionError is returned when the user denies permission.
-func Install(path, user, prompt, iconPath string, overwrite bool) error {
+// A second binary, config-bpf, is installed in the same directory and according to the same rules.
+// This binary is used to support a launchd user agent necessary for tlserver operation.
+//
+// A PermissionError is returned when the user denies permission.
+func Install(dir, user, prompt, iconPath string, overwrite bool) error {
+	if runtime.GOOS != "darwin" {
+		return errors.New("unsupported platform")
+	}
+
+	tlserverPath, configBPFPath := filepath.Join(dir, "tlserver"), filepath.Join(dir, "config-bpf")
 	tlserverBinary, err := tlserverbin.Asset("tlserver")
 	if err != nil {
 		return fmt.Errorf("failed to load tlserver binary: %w", err)
 	}
-	if err := writeFile(tlserverBinary, path, overwrite); err != nil {
+	if err := writeFile(tlserverBinary, tlserverPath, overwrite); err != nil {
 		return fmt.Errorf("failed to write tlserver binary: %w", err)
 	}
+	configBPFBinary, err := tlserverbin.Asset("config-bpf")
+	if err != nil {
+		return fmt.Errorf("failed to load config-bpf binary: %w", err)
+	}
+	if err := writeFile(configBPFBinary, configBPFPath, overwrite); err != nil {
+		return fmt.Errorf("failed to write config-bpf binary: %w", err)
+	}
 
-	tmpDir, err := ioutil.TempDir("", "lantern_tmp_resources")
+	tlconfig, err := loadTlconfig()
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir for tlconfig binary: %w", err)
+		return fmt.Errorf("failed to load tlconfig: %w", err)
 	}
-	defer os.RemoveAll(tmpDir)
-
-	configBinary, err := tlserverbin.Asset("tlconfig")
-	if err != nil {
-		return fmt.Errorf("failed to load tlconfig binary: %w", err)
-	}
-	configExec, err := byteexec.New(configBinary, filepath.Join(tmpDir, "tlconfig"))
-	if err != nil {
-		return fmt.Errorf("failed to write tlconfig binary to disk: %w", err)
-	}
+	tlconfig.setArgs(tlserverPath, configBPFPath, user)
+	defer tlconfig.close()
 
 	// Check existing system configuration.
 	var exitErr *exec.ExitError
-	output, err := configExec.Command("-test", path, user).CombinedOutput()
+	output, err := tlconfig.run("-test")
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
 		log.Debugf("tlconfig found changes necessary:\n%s", string(output))
 	} else if err != nil {
@@ -70,7 +139,7 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 	}
 
 	// Configure system.
-	output, err = elevateCommand(prompt, iconPath, configExec.Filename, path, user)
+	output, err = tlconfig.elevate(prompt, iconPath).run()
 	if err != nil {
 		if len(output) > 0 {
 			err = fmt.Errorf("%w: %s", err, string(output))
@@ -79,8 +148,8 @@ func Install(path, user, prompt, iconPath string, overwrite bool) error {
 	}
 
 	// On macOS, elevate will obscure the exit code of the command, so we can't actually know if
-	// the tlconfig ran successfully. We check manually by running again with -test.
-	output, err = configExec.Command("-test", path, user).CombinedOutput()
+	// tlconfig ran successfully. We check manually by running again with -test.
+	output, err = tlconfig.run("-test")
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
 		errMsg := "unexpected configuration failure"
 		if len(output) > 0 {
@@ -127,17 +196,6 @@ func writeFile(contents []byte, path string, overwrite bool) error {
 		return fmt.Errorf("failed to overwrite: %w", err)
 	}
 	return nil
-}
-
-// Prompts the user for permission and returns the combined stdout and stderr. On supported
-// platforms, a PermissionError is returned when the user denies permission.
-func elevateCommand(prompt, icon, command string, args ...string) ([]byte, error) {
-	cmd := elevate.WithPrompt(prompt).WithIcon(icon)
-	out, err := cmd.Command(command, args...).CombinedOutput()
-	if err != nil && isPermissionError(err) {
-		return out, ErrPermissionDenied
-	}
-	return out, err
 }
 
 func isPermissionError(elevateErr error) bool {

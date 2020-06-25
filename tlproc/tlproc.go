@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -109,22 +110,23 @@ type TrafficLogProcess struct {
 
 // New traffic log process. The current process must be running code signed with the
 // "com.getlantern.lantern" identifier and a trusted anchor. execPath specifies the path to the
-// executable and should match the path previously provided to Install.
+// installation directory and should match the path previously provided to Install.
 //
 // Install must be invoked before the first call to New on a given machine. Installations persist
 // across runtimes.
-func New(captureBytes, saveBytes int, execPath string, opts *Options) (*TrafficLogProcess, error) {
+func New(captureBytes, saveBytes int, installDir string, opts *Options) (*TrafficLogProcess, error) {
 	if opts == nil {
 		opts = &Options{}
 	}
-	_, err := os.Stat(execPath)
+	binPath := filepath.Join(installDir, "tlserver")
+	_, err := os.Stat(binPath)
 	if err != nil && errors.Is(err, os.ErrNotExist) {
 		return nil, errors.New("executable does not exist at provided path")
 	} else if err != nil {
 		return nil, fmt.Errorf("failed to stat executable: %w", err)
 	}
 
-	tlserver, err := byteexec.Existing(execPath)
+	tlserver, err := byteexec.Existing(binPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create executable: %w", err)
 	}

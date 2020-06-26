@@ -127,14 +127,18 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	var exitErr *exec.ExitError
 	output, err := tlconfig.run("-test")
 	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
-		log.Debugf("tlconfig found changes necessary:\n%s", string(output))
+		log.Debugf("tlconfig found changes necessary: %s", string(output))
 	} else if err != nil {
 		if len(output) > 0 {
 			err = fmt.Errorf("%w: %s", err, string(output))
 		}
 		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	} else {
-		log.Debugf("tlconfig found no necessary changes:\n%s", string(output))
+		if len(output) > 0 {
+			log.Debugf("tlconfig found no necessary changes: %s", string(output))
+		} else {
+			log.Debug("tlconfig found no necessary changes")
+		}
 		return nil
 	}
 

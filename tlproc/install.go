@@ -12,7 +12,7 @@ import (
 
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/elevate"
-	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
+	"github.com/getlantern/trafficlog-flashlight/internal/exitcodes"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 )
 
@@ -126,16 +126,16 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	// Check existing system configuration.
 	var exitErr *exec.ExitError
 	output, err := tlconfig.run("-test")
-	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
-		log.Debugf("tlconfig found changes necessary: %s", string(output))
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == exitcodes.FailedCheck {
+		log.Debugf("tlconfig found changes necessary: %s", string(fmtOutputForLog(output)))
 	} else if err != nil {
 		if len(output) > 0 {
-			err = fmt.Errorf("%w: %s", err, string(output))
+			err = fmt.Errorf("%w: %s", err, string(lastLine(output)))
 		}
 		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	} else {
 		if len(output) > 0 {
-			log.Debugf("tlconfig found no necessary changes: %s", string(output))
+			log.Debugf("tlconfig found no necessary changes: %s", string(fmtOutputForLog(output)))
 		} else {
 			log.Debug("tlconfig found no necessary changes")
 		}
@@ -146,7 +146,7 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	output, err = tlconfig.elevate(prompt, iconPath).run()
 	if err != nil {
 		if len(output) > 0 {
-			err = fmt.Errorf("%w: %s", err, string(output))
+			err = fmt.Errorf("%w: %s", err, string(lastLine(output)))
 		}
 		return fmt.Errorf("failed to run tlconfig: %w", err)
 	}
@@ -154,10 +154,10 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	// On macOS, elevate will obscure the exit code of the command, so we can't actually know if
 	// tlconfig ran successfully. We check manually by running again with -test.
 	output, err = tlconfig.run("-test")
-	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == tlconfigexit.CodeFailedCheck {
+	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == exitcodes.FailedCheck {
 		errMsg := "unexpected configuration failure"
 		if len(output) > 0 {
-			errMsg = fmt.Sprintf("%s: %s", errMsg, string(output))
+			errMsg = fmt.Sprintf("%s: %s", errMsg, string(lastLine(output)))
 		}
 		return errors.New(errMsg)
 	} else if err != nil {
@@ -166,7 +166,7 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 
 	successLog := "tlserver installed successfully"
 	if len(output) > 0 {
-		successLog = fmt.Sprintf("%s:\n%s", successLog, string(output))
+		successLog = fmt.Sprintf("%s: %s", successLog, string(fmtOutputForLog(output)))
 	}
 	log.Debug(successLog)
 	return nil
@@ -213,4 +213,22 @@ func isPermissionError(elevateErr error) bool {
 	// binary ourselves, we can be reasonably sure that this is the second case.
 	var exitErr *exec.ExitError
 	return errors.As(elevateErr, &exitErr)
+}
+
+func fmtOutputForLog(cmdOutput []byte) []byte {
+	cmdOutput = bytes.TrimSpace(cmdOutput)
+	splits := bytes.Split(cmdOutput, []byte{'\n'})
+	if len(splits) == 1 {
+		return splits[0]
+	}
+	b := make([]byte, len(cmdOutput)+1)
+	b[0] = '\n'
+	copy(b[1:], cmdOutput)
+	return b
+}
+
+func lastLine(b []byte) []byte {
+	b = bytes.TrimSpace(b)
+	splits := bytes.Split(b, []byte{'\n'})
+	return splits[len(splits)-1]
 }

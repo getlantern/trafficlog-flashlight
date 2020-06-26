@@ -1,14 +1,16 @@
 // Command tlconfig is used when installing tlserver, ensuring that the system is properly
 // configured for packet capture. This includes:
-//	- Configuring proper permissions for the config-bpf binary.
-//	- Setting up config-bpf as a launchd user agent.
+//	- Configuring proper permissions for the tlserver and config-bpf binaries.
+//	- Running config-bpf.
+//	- Setting up config-bpf as a launchd user agent so that it will run on login.
 //
 // Three arguments are expected:
 //	1) The path to the tlserver binary.
 //	3) The path to the config-bpf binary.
 //	2) The user for which tlserver is being installed.
 //
-// Currently macOS only.
+// Currently macOS only. In the case of an error, the last line printed to stderr will describe the
+// cause.
 package main
 
 import (
@@ -25,7 +27,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/getlantern/trafficlog-flashlight/internal/tlconfigexit"
+	"github.com/getlantern/trafficlog-flashlight/internal/exitcodes"
 )
 
 const (
@@ -84,54 +86,6 @@ func configBPFLaunchdPlistData(configBPFAbsPath, outDir string) []byte {
 	return []byte(fmt.Sprintf(configBPFLaunchdTmpl, configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir))
 }
 
-type errorFailedCheck struct {
-	msg string
-}
-
-func failedCheck(msg string) errorFailedCheck {
-	return errorFailedCheck{msg}
-}
-
-func failedCheckf(msg string, a ...interface{}) errorFailedCheck {
-	return failedCheck(fmt.Sprintf(msg, a...))
-}
-
-func (e errorFailedCheck) Error() string {
-	return e.msg
-}
-
-type errorBadInput struct {
-	msg   string
-	cause error
-}
-
-func badInput(msg string, cause error) errorBadInput {
-	return errorBadInput{msg, cause}
-}
-
-func (e errorBadInput) Error() string {
-	if e.cause == nil {
-		return e.msg
-	}
-	return fmt.Sprintf("%s: %v", e.msg, e.cause)
-}
-
-func (e errorBadInput) Unwrap() error {
-	return e.cause
-}
-
-func fail(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	switch {
-	case errors.As(err, new(errorBadInput)):
-		os.Exit(tlconfigexit.CodeBadInput)
-	case errors.As(err, new(errorFailedCheck)):
-		os.Exit(tlconfigexit.CodeFailedCheck)
-	default:
-		os.Exit(tlconfigexit.CodeUnexpectedFailure)
-	}
-}
-
 func createGroup(name string) (*user.Group, error) {
 	cmd := exec.Command("dseditgroup", "-o", "create", "-r", name, name)
 	// We use cmd.Output over cmd.Run to populate err.Stderr.
@@ -174,6 +128,20 @@ func (fi *fileInfo) refresh() error {
 	return nil
 }
 
+func lastLine(b []byte) []byte {
+	if len(b) == 0 {
+		return b
+	}
+	if b[0] == '\n' {
+		return lastLine(b[1:])
+	}
+	if b[len(b)-1] == '\n' {
+		return lastLine(b[:len(b)-1])
+	}
+	splits := bytes.Split(b, []byte{'\n'})
+	return splits[len(splits)-1]
+}
+
 // Assign the binary to the user and group, assign the specified permissions.
 func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode, testMode bool) error {
 	statT, ok := info.Sys().(*syscall.Stat_t)
@@ -193,7 +161,7 @@ func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode,
 	}
 	if binUID != userUID || binGID != bpfGID {
 		if testMode {
-			return failedCheckf("not owned by %s and %s", u.Username, bpfGroup)
+			return exitcodes.ErrorFailedCheckf("not owned by %s and %s", u.Username, bpfGroup)
 		}
 		if err := os.Chown(info.path, userUID, bpfGID); err != nil {
 			return fmt.Errorf("failed to change ownership: %w", err)
@@ -206,7 +174,7 @@ func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode,
 	}
 	if info.Mode() != perm {
 		if testMode {
-			return failedCheckf("improper permissions: %v", info.Mode())
+			return exitcodes.ErrorFailedCheckf("improper permissions: %v", info.Mode())
 		}
 		if err := os.Chmod(info.path, perm); err != nil {
 			return fmt.Errorf("failed to assign proper permissions: %w", err)
@@ -225,19 +193,19 @@ func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode,
 func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username string, testMode bool) error {
 	u, err := user.Lookup(username)
 	if err != nil {
-		return badInput("failed to look up user", err)
+		return exitcodes.ErrorBadInput("failed to look up user", err)
 	}
 	tlserverInfo, err := stat(tlserver)
 	if err != nil {
-		return badInput("failed to stat tlserver binary", err)
+		return exitcodes.ErrorBadInput("failed to stat tlserver binary", err)
 	}
 	configBPFInfo, err := stat(configBPF)
 	if err != nil {
-		return badInput("failed to stat config-bpf binary", err)
+		return exitcodes.ErrorBadInput("failed to stat config-bpf binary", err)
 	}
 	configBPFOutDirInfo, err := stat(configBPFOutDir)
 	if err != nil {
-		return badInput("failed to stat config-bpf output directory", err)
+		return exitcodes.ErrorBadInput("failed to stat config-bpf output directory", err)
 	}
 
 	// Create the BPF group.
@@ -248,7 +216,7 @@ func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username
 	case !errors.As(err, new(user.UnknownGroupError)):
 		return fmt.Errorf("failed to look up %s: %w", bpfGroup, err)
 	case errors.As(err, new(user.UnknownGroupError)) && testMode:
-		return failedCheckf("%s does not exist", bpfGroup)
+		return exitcodes.ErrorFailedCheckf("%s does not exist", bpfGroup)
 	case errors.As(err, new(user.UnknownGroupError)) && !testMode:
 		g, err = createGroup(bpfGroup)
 		if err != nil {
@@ -269,19 +237,33 @@ func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username
 		return fmt.Errorf("failed to configure config-bpf: %w", err)
 	}
 
+	// Run config-bpf. Though we will be registering this to run on login, we want the system to be
+	// properly configured when tlconfig completes.
+	var exitErr *exec.ExitError
+	args := []string{}
+	if testMode {
+		args = []string{"-test"}
+	}
+	out, err := exec.Command(configBPFInfo.path, args...).CombinedOutput()
+	if err != nil && errors.As(err, &exitErr) {
+		return exitcodes.ErrorFromCode(exitErr.ExitCode(), string(lastLine(out)))
+	} else if err != nil {
+		return fmt.Errorf("failed to run config-bpf: %w", err)
+	}
+
 	plistData := configBPFLaunchdPlistData(configBPFInfo.path, configBPFOutDirInfo.path)
 	plistDir := strings.Replace(configBPFPlistDir, "~", u.HomeDir, -1)
 	plistFilename := fmt.Sprintf("%s/%s.plist", plistDir, configBPFLaunchdLabel)
 	if testMode {
 		actualData, err := ioutil.ReadFile(plistFilename)
 		if os.IsNotExist(err) {
-			return failedCheck("no launchd file found for config-bpf")
+			return exitcodes.ErrorFailedCheck("no launchd file found for config-bpf")
 		}
 		if err != nil {
 			return fmt.Errorf("failed to read existing launchd file for config-bpf: %w", err)
 		}
 		if !bytes.Equal(plistData, actualData) {
-			return failedCheck("existing launchd file for config-bpf differs from expected")
+			return exitcodes.ErrorFailedCheck("existing launchd file for config-bpf differs from expected")
 		}
 	} else {
 		if err := ioutil.WriteFile(plistFilename, plistData, 0644); err != nil {
@@ -297,7 +279,7 @@ func main() {
 	args := flag.Args()
 	if len(args) < 3 {
 		flag.Usage()
-		os.Exit(tlconfigexit.CodeBadInput)
+		os.Exit(exitcodes.BadInput)
 	}
 	tlserverPath, configBPFPath, username := args[0], args[1], args[2]
 	if *configBPFOutDir == configBPFParentDir || *configBPFOutDir == "" {
@@ -312,8 +294,8 @@ func main() {
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			fail(fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr)))
+			exitcodes.ExitWith(fmt.Errorf("%s: %s", err.Error(), string(exitErr.Stderr)))
 		}
-		fail(err)
+		exitcodes.ExitWith(err)
 	}
 }

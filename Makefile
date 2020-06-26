@@ -7,7 +7,7 @@ STAGING_DIR := build-staging
 
 # tlconfig and config-bpf are only built for macOS.
 TLCONFIG := $(STAGING_DIR)/unsigned/tlconfig
-TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/tlconfigexit -name "*.go") go.mod go.sum
+TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/exitcodes -name "*.go") go.mod go.sum
 CONFIG_BPF := $(STAGING_DIR)/unsigned/config-bpf
 CONFIG_BPF_SRCS := $(shell find internal/cmd/config-bpf -name "*.go") go.mod go.sum
 

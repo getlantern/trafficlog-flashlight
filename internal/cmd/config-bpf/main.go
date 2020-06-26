@@ -1,9 +1,12 @@
-// Command config-bpf is used to configure the BPF devices on a machine. It is macOS-specific.
+// Command config-bpf is used to configure the BPF devices on a machine. It is macOS-specific. In
+// the case of an error, the last line printed to stderr will describe the cause.
 //
 // Much of the logic and reasoning is based on Wireshark's ChmodBPF utility.
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/getlantern/trafficlog-flashlight/internal/exitcodes"
 )
 
 const (
@@ -22,7 +27,11 @@ const (
 	maxCreatedDevices = 256
 )
 
-var bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
+var (
+	testMode = flag.Bool("test", false, "make no changes, just check the current installation")
+
+	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
+)
 
 func getMaxBPFDevices() (int, error) {
 	out, err := exec.Command("sysctl", "-n", "debug.bpf_maxdevices").Output()
@@ -48,23 +57,16 @@ func triggerNextBPFDevice(currentDevice int) error {
 	return nil
 }
 
-func fail(a ...interface{}) {
-	fmt.Fprintln(os.Stderr, a...)
-	os.Exit(1)
-}
-
-func failf(msg string, a ...interface{}) {
-	fail(fmt.Sprintf(msg, a...))
-}
-
 func main() {
+	flag.Parse()
+
 	g, err := user.LookupGroup(bpfGroup)
 	if err != nil {
-		failf("failed to look up %s: %v", bpfGroup, err)
+		exitcodes.ExitWith(fmt.Errorf("failed to look up %s: %w", bpfGroup, err))
 	}
 	bpfGID, err := strconv.Atoi(g.Gid)
 	if err != nil {
-		failf("failed to parse %s GID: %v", bpfGroup, err)
+		exitcodes.ExitWith(fmt.Errorf("failed to parse %s GID: %v", bpfGroup, err))
 	}
 
 	// Pre-create BPF devices so that we can assign the group and permissions we'd like. The logic
@@ -89,14 +91,19 @@ func main() {
 	})
 	endDevice, err := getMaxBPFDevices()
 	if err != nil {
-		fail("unable to determine max BPF devices:", err)
+		exitcodes.ExitWith(fmt.Errorf("unable to determine max BPF devices: %w", err))
 	}
-	for i := startDevice; i < endDevice; i++ {
-		if err := triggerNextBPFDevice(i); err != nil {
-			// This error does not mean we should abandon the configuration process, but it does
-			// mean that attempts to create further devices will also fail.
-			fmt.Fprintf(os.Stderr, "failed to create device %d: %v", i+1, err)
-			break
+	if !*testMode {
+		// Note that we don't check the number of devices in test mode. A failed check may trigger a
+		// re-install, which in turn prompts the user. Thus we want to avoid returning failed check
+		// codes unless we have to, and it is not strictly required that all of these devices exist.
+		for i := startDevice; i < endDevice; i++ {
+			if err := triggerNextBPFDevice(i); err != nil {
+				// This error does not mean we should abandon the configuration process, but it does
+				// mean that attempts to create further devices will also fail.
+				fmt.Fprintf(os.Stderr, "failed to create device %d: %v", i+1, err)
+				break
+			}
 		}
 	}
 
@@ -115,29 +122,35 @@ func main() {
 		return nil
 	}
 	if err := filepath.Walk("/dev", walkFn); err != nil {
-		fail("failed to walk /dev:", err)
+		exitcodes.ExitWith(fmt.Errorf("failed to walk /dev: %w", err))
 	}
 	if len(bpfDevices) == 0 {
-		fail("found no BPF devices")
+		exitcodes.ExitWith(errors.New("found no BPF devices"))
 	}
 	for _, dev := range bpfDevices {
 		devInfo, err := os.Stat(dev)
 		if err != nil {
-			failf("failed to stat %s: %v", dev, err)
+			exitcodes.ExitWith(fmt.Errorf("failed to stat %s: %w", dev, err))
 		}
 		devStatT, ok := devInfo.Sys().(*syscall.Stat_t)
 		if !ok {
-			fail("failed to obtain detailed stat info for", dev)
+			exitcodes.ExitWith(fmt.Errorf("failed to obtain detailed stat info for %v", dev))
 		}
 		if int(devStatT.Gid) != bpfGID {
+			if *testMode {
+				exitcodes.ExitWith(exitcodes.ErrorFailedCheckf("%s not owned by %s", dev, bpfGroup))
+			}
 			if err := os.Chown(dev, -1, bpfGID); err != nil {
-				failf("failed to assign %s to %s: %v", dev, bpfGroup, err)
+				exitcodes.ExitWith(fmt.Errorf("failed to assign %s to %s: %w", dev, bpfGroup, err))
 			}
 		}
 		var groupRead os.FileMode = 0b100000
 		if devInfo.Mode()&groupRead != groupRead {
+			if *testMode {
+				exitcodes.ExitWith(exitcodes.ErrorFailedCheckf("%s does not have group read", dev))
+			}
 			if err := os.Chmod(dev, devInfo.Mode()|groupRead); err != nil {
-				failf("failed to assign group read to %s: %v", dev, err)
+				exitcodes.ExitWith(fmt.Errorf("failed to assign group read to %s: %w", dev, err))
 			}
 		}
 	}

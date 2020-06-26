@@ -73,13 +73,6 @@ func (opts Options) requestTimeout() time.Duration {
 	return opts.RequestTimeout
 }
 
-func (opts Options) mtuLimit() int {
-	if opts.MTULimit == 0 {
-		return trafficlog.DefaultMaxMTU
-	}
-	return opts.MTULimit
-}
-
 func (opts Options) mutatorFactory() trafficlog.MutatorFactory {
 	if opts.MutatorFactory == nil {
 		return new(trafficlog.NoOpFactory)
@@ -143,7 +136,6 @@ func New(captureBytes, saveBytes int, installDir string, opts *Options) (*Traffi
 		"-socket-file", socket,
 		"-capture-bytes", strconv.Itoa(captureBytes),
 		"-save-bytes", strconv.Itoa(saveBytes),
-		"-mtu-limit", strconv.Itoa(opts.MTULimit),
 		"-stats-interval", opts.statsInterval().String(),
 		"-error-prefix", errorPrefix,
 		"-stats-prefix", statsPrefix,

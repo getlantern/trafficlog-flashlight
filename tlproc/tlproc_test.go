@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/getlantern/trafficlog"
 	"github.com/getlantern/trafficlog/tltest"
 	"github.com/stretchr/testify/require"
 )
@@ -34,9 +33,7 @@ func TestTrafficLogProcess(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, Install(path, u.Username, installPrompt, "", false))
 
-	opts := &Options{}
-	opts.MTULimit = trafficlog.MTULimitNone
-	tl, err := New(captureBufferSize, saveBufferSize, path, opts)
+	tl, err := New(captureBufferSize, saveBufferSize, path, nil)
 	require.NoError(t, err)
 	tltest.TestTrafficLog(t, tl)
 }

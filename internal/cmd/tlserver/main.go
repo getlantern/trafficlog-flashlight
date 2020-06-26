@@ -30,7 +30,6 @@ var (
 	socketFile    = flag.String("socket-file", "", "file to listen on; should not exist")
 	captureBytes  = flag.Int("capture-bytes", 0, "size of the capture buffer")
 	saveBytes     = flag.Int("save-bytes", 0, "size of the save buffer")
-	mtuLimit      = flag.Int("mtu-limit", trafficlog.DefaultMaxMTU, "largest acceptable MTU")
 	statsInterval = flag.Duration("stats-interval", trafficlog.DefaultStatsInterval, "print stats at this rate")
 	stripAppLayer = flag.Bool("strip-app-layer", false, "strip application-layer data")
 	errorPrefix   = flag.String("error-prefix", "", "prefix for error logs")
@@ -97,7 +96,6 @@ func main() {
 	}
 
 	tl := trafficlog.New(*captureBytes, *saveBytes, &trafficlog.Options{
-		MTULimit:       *mtuLimit,
 		StatsInterval:  *statsInterval,
 		MutatorFactory: mutator,
 	})

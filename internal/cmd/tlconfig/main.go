@@ -69,21 +69,29 @@ const configBPFLaunchdTmpl = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 	<dict>
-        <key>Label</key>
-        <string>%s</string>
-        <key>Program</key>
-        <string>%s</string>
-        <key>RunAtLoad</key>
-        <true/>
-        <key>StandardOutPath</key>
-        <string>%s/config-bpf.stdout</string>
-        <key>StandardErrorPath</key>
-        <string>%s/config-bpf.stderr</string>
+		<key>Label</key>
+		<string>%s</string>
+		<key>ProgramArguments</key>
+		<array>
+			<string>%s</string>
+			<string>-stdout</string>
+			<string>%s/config-bpf.stdout</string>
+			<string>-stderr</string>
+			<string>%s/config-bpf.stderr</string>
+		</array>
+		<key>RunAtLoad</key>
+		<true/>
+		<key>StandardOutPath</key>
+		<string>%s/config-bpf.stdout</string>
+		<key>StandardErrorPath</key>
+		<string>%s/config-bpf.stderr</string>
 	</dict>
 </plist>`
 
 func configBPFLaunchdPlistData(configBPFAbsPath, outDir string) []byte {
-	return []byte(fmt.Sprintf(configBPFLaunchdTmpl, configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir))
+	return []byte(fmt.Sprintf(configBPFLaunchdTmpl,
+		configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir, outDir, outDir,
+	))
 }
 
 func createGroup(name string) (*user.Group, error) {

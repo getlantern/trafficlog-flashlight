@@ -1,6 +1,11 @@
 // Command config-bpf is used to configure the BPF devices on a machine. It is macOS-specific. In
 // the case of an error, the last line printed to stderr will describe the cause.
 //
+// This utility is intended to be (1) run by tlconfig on install and (2) configured as a launchd
+// user agent to run on login. In the second case, stdout and stderr can be redirected using the
+// launchd plist file. However, the files should be provided to this utility as well so that we can
+// manage the size of these files. Otherwise, launchd will allow them to grow unbounded.
+//
 // Much of the logic and reasoning is based on Wireshark's ChmodBPF utility.
 package main
 
@@ -28,7 +33,9 @@ const (
 )
 
 var (
-	testMode = flag.Bool("test", false, "make no changes, just check the current installation")
+	testMode   = flag.Bool("test", false, "make no changes, just check the current installation")
+	stdoutFile = flag.String("stdout", "", "path to the launchd stdout file for this utility")
+	stderrFile = flag.String("stderr", "", "path to the launchd stderr file for this utility")
 
 	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
 )
@@ -59,6 +66,18 @@ func triggerNextBPFDevice(currentDevice int) error {
 
 func main() {
 	flag.Parse()
+
+	// If the stdout and stderr files have been provided, clear old data by truncating.
+	if *stderrFile != "" {
+		if _, err := os.Create(*stderrFile); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to truncate stderr file")
+		}
+	}
+	if *stdoutFile != "" {
+		if _, err := os.Create(*stdoutFile); err != nil {
+			fmt.Fprintln(os.Stderr, "failed to truncate stdout file")
+		}
+	}
 
 	g, err := user.LookupGroup(bpfGroup)
 	if err != nil {
@@ -97,7 +116,7 @@ func main() {
 		// Note that we don't check the number of devices in test mode. A failed check may trigger a
 		// re-install, which in turn prompts the user. Thus we want to avoid returning failed check
 		// codes unless we have to, and it is not strictly required that all of these devices exist.
-		for i := startDevice; i < endDevice; i++ {
+		for i := startDevice; i < endDevice-1; i++ {
 			if err := triggerNextBPFDevice(i); err != nil {
 				// This error does not mean we should abandon the configuration process, but it does
 				// mean that attempts to create further devices will also fail.

@@ -13,6 +13,7 @@ import (
 	"github.com/getlantern/byteexec"
 	"github.com/getlantern/elevate"
 	"github.com/getlantern/trafficlog-flashlight/internal/exitcodes"
+	"github.com/getlantern/trafficlog-flashlight/internal/tlinstall"
 	"github.com/getlantern/trafficlog-flashlight/internal/tlserverbin"
 )
 
@@ -27,25 +28,20 @@ var tlconfigOpts = []string{}
 type tlconfigExec struct {
 	*byteexec.Exec
 	args         []string
-	tmpDir       string
 	prompt, icon string
 }
 
-func loadTlconfig() (*tlconfigExec, error) {
+func loadTlconfig(tmpDir string) (*tlconfigExec, error) {
 	configBinary, err := tlserverbin.Asset("tlconfig")
 	if err != nil {
 		return nil, fmt.Errorf("failed to load asset: %w", err)
-	}
-	tmpDir, err := ioutil.TempDir("", "lantern_tmp_resources")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir for binary: %w", err)
 	}
 	exec, err := byteexec.New(configBinary, filepath.Join(tmpDir, "tlconfig"))
 	if err != nil {
 		os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("failed to write binary to disk: %w", err)
 	}
-	return &tlconfigExec{Exec: exec, tmpDir: tmpDir}, nil
+	return &tlconfigExec{Exec: exec}, nil
 }
 
 func (e *tlconfigExec) setArgs(args ...string) {
@@ -72,11 +68,7 @@ func (e tlconfigExec) run(opts ...string) ([]byte, error) {
 
 // Closing the returned value will also close e.
 func (e tlconfigExec) elevate(prompt, icon string) tlconfigExec {
-	return tlconfigExec{e.Exec, e.args, e.tmpDir, prompt, icon}
-}
-
-func (e tlconfigExec) close() error {
-	return os.RemoveAll(e.tmpDir)
+	return tlconfigExec{e.Exec, e.args, prompt, icon}
 }
 
 // Install the traffic log server. This package is currently macOS only; calls to Install on other
@@ -100,46 +92,64 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 		return errors.New("unsupported platform")
 	}
 
-	tlserverPath, configBPFPath := filepath.Join(dir, "tlserver"), filepath.Join(dir, "config-bpf")
+	resourcesPath, err := ioutil.TempDir("", "lantern-tmp-resources")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary directory: %w", err)
+	}
+	defer os.RemoveAll(resourcesPath)
+	resources, err := tlinstall.NewResourcesDir(resourcesPath)
+	if err != nil {
+		return fmt.Errorf("failed to create reference to resources directory: %w", err)
+	}
+
 	tlserverBinary, err := tlserverbin.Asset("tlserver")
 	if err != nil {
 		return fmt.Errorf("failed to load tlserver binary: %w", err)
 	}
-	if err := writeFile(tlserverBinary, tlserverPath, overwrite); err != nil {
-		return fmt.Errorf("failed to write tlserver binary: %w", err)
+	if err := ioutil.WriteFile(resources.Tlserver(), tlserverBinary, 0744); err != nil {
+		return fmt.Errorf("failed to write tlserver binary to resources directory: %w", err)
 	}
 	configBPFBinary, err := tlserverbin.Asset("config-bpf")
 	if err != nil {
 		return fmt.Errorf("failed to load config-bpf binary: %w", err)
 	}
-	if err := writeFile(configBPFBinary, configBPFPath, overwrite); err != nil {
-		return fmt.Errorf("failed to write config-bpf binary: %w", err)
+	if err := ioutil.WriteFile(resources.ConfigBPF(), configBPFBinary, 0744); err != nil {
+		return fmt.Errorf("failed to write config-bpf binary to resources directory: %w", err)
 	}
 
-	tlconfig, err := loadTlconfig()
+	tlconfig, err := loadTlconfig(resourcesPath)
 	if err != nil {
 		return fmt.Errorf("failed to load tlconfig: %w", err)
 	}
-	tlconfig.setArgs(tlserverPath, configBPFPath, user)
-	defer tlconfig.close()
+	tlconfig.setArgs(dir, resourcesPath, user)
 
 	// Check existing system configuration.
-	var exitErr *exec.ExitError
+	var (
+		exitErr               *exec.ExitError
+		failedCheck, outdated bool
+	)
 	output, err := tlconfig.run("-test")
-	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == exitcodes.FailedCheck {
+	if errors.As(err, &exitErr) {
+		outdated = exitErr.ExitCode() == exitcodes.Outdated
+		failedCheck = exitErr.ExitCode() == exitcodes.FailedCheck
+	}
+	switch {
+	case failedCheck, outdated && overwrite:
 		log.Debugf("tlconfig found changes necessary: %s", string(fmtOutputForLog(output)))
-	} else if err != nil {
+	case err == nil, outdated && !overwrite:
 		if len(output) > 0 {
-			err = fmt.Errorf("%w: %s", err, string(lastLine(output)))
-		}
-		return fmt.Errorf("failed to run tlconfig -test: %w", err)
-	} else {
-		if len(output) > 0 {
-			log.Debugf("tlconfig found no necessary changes: %s", string(fmtOutputForLog(output)))
+			log.Debugf(
+				"tlconfig found no necessary changes (overwrite=%t); output: %s",
+				overwrite, string(fmtOutputForLog(output)))
 		} else {
 			log.Debug("tlconfig found no necessary changes")
 		}
 		return nil
+	default:
+		if len(output) > 0 {
+			err = fmt.Errorf("%w: %s", err, string(lastLine(output)))
+		}
+		return fmt.Errorf("failed to run tlconfig -test: %w", err)
 	}
 
 	// Configure system.
@@ -161,7 +171,11 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 		}
 		return errors.New(errMsg)
 	} else if err != nil {
-		return fmt.Errorf("failed to check success of tlconfig: %w", err)
+		errMsg := "unexpected failure running post-install check"
+		if len(output) > 0 {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, string(lastLine(output)))
+		}
+		return errors.New(errMsg)
 	}
 
 	successLog := "tlserver installed successfully"
@@ -169,36 +183,6 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 		successLog = fmt.Sprintf("%s: %s", successLog, string(fmtOutputForLog(output)))
 	}
 	log.Debug(successLog)
-	return nil
-}
-
-// Writes to the path if:
-//	no such file exists || (existing file differs && overwrite)
-func writeFile(contents []byte, path string, overwrite bool) error {
-	f, err := os.OpenFile(path, os.O_RDWR, 0744)
-	if err != nil && errors.Is(err, os.ErrNotExist) {
-		if err := ioutil.WriteFile(path, contents, 0744); err != nil {
-			return fmt.Errorf("failed to create and write: %w", err)
-		}
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("failed to open for reading: %w", err)
-	}
-	defer f.Close()
-
-	if !overwrite {
-		return nil
-	}
-	current, err := ioutil.ReadAll(f)
-	if err != nil {
-		return fmt.Errorf("failed to read: %w", err)
-	}
-	if bytes.Equal(current, contents) {
-		return nil
-	}
-	if _, err := f.WriteAt(contents, 0); err != nil {
-		return fmt.Errorf("failed to overwrite: %w", err)
-	}
 	return nil
 }
 

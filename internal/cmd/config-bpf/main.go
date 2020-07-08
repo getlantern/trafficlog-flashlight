@@ -2,9 +2,9 @@
 // the case of an error, the last line printed to stderr will describe the cause.
 //
 // This utility is intended to be (1) run by tlconfig on install and (2) configured as a launchd
-// user agent to run on login. In the second case, stdout and stderr can be redirected using the
-// launchd plist file. However, the files should be provided to this utility as well so that we can
-// manage the size of these files. Otherwise, launchd will allow them to grow unbounded.
+// global daemon to run on startup. In the second case, stdout and stderr can be redirected using
+// the launchd plist file. However, the files should be provided to this utility as well so that we
+// can manage the size of these files. Otherwise, launchd will allow them to grow unbounded.
 //
 // Much of the logic and reasoning is based on Wireshark's ChmodBPF utility.
 package main
@@ -56,10 +56,13 @@ func getMaxBPFDevices() (int, error) {
 }
 
 func triggerNextBPFDevice(currentDevice int) error {
-	// We use exec.Cmd.Output over exec.Cmd.Run to populate err.Stderr.
-	cmd := fmt.Sprintf(": < /dev/bpf%d > /dev/null", currentDevice)
-	if _, err := exec.Command("/bin/sh", "-c", cmd).Output(); err != nil {
-		return err
+	f, err := os.Open(fmt.Sprintf("/dev/bpf%d", currentDevice))
+	if err != nil {
+		return fmt.Errorf("failed to open current device: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.Read([]byte{}); err != nil {
+		return fmt.Errorf("empty read of %s failed: %w", f.Name(), err)
 	}
 	return nil
 }
@@ -93,7 +96,7 @@ func main() {
 	//
 	// We create devices on a best-effort basis, ignoring most errors that we might come across.
 	startDevice := 0
-	filepath.Walk("/dev", func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk("/dev", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -108,6 +111,9 @@ func main() {
 		}
 		return nil
 	})
+	if err != nil {
+		exitcodes.ExitWith(fmt.Errorf("failed to walk /dev: %w", err))
+	}
 	endDevice, err := getMaxBPFDevices()
 	if err != nil {
 		exitcodes.ExitWith(fmt.Errorf("unable to determine max BPF devices: %w", err))
@@ -120,7 +126,7 @@ func main() {
 			if err := triggerNextBPFDevice(i); err != nil {
 				// This error does not mean we should abandon the configuration process, but it does
 				// mean that attempts to create further devices will also fail.
-				fmt.Fprintf(os.Stderr, "failed to create device %d: %v", i+1, err)
+				fmt.Fprintf(os.Stderr, "failed to create device %d: %v\n", i+1, err)
 				break
 			}
 		}

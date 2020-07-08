@@ -1,16 +1,17 @@
 // Command tlconfig is used when installing tlserver, ensuring that the system is properly
 // configured for packet capture. This includes:
-//	- Configuring proper permissions for the tlserver and config-bpf binaries.
+//	- Configuring proper ownership and permissions for the tlserver and config-bpf binaries.
 //	- Running config-bpf.
-//	- Setting up config-bpf as a launchd user agent so that it will run on login.
+//	- Setting up config-bpf as a launchd global daemon so that it will run on startup as root.
 //
 // Three arguments are expected:
-//	1) The path to the tlserver binary.
-//	3) The path to the config-bpf binary.
-//	2) The user for which tlserver is being installed.
+//	1) The path to the installation directory.
+//	2) The path to a directory containing install resources. Specifically, this directory should
+//     contain the tlserver and config-bpf binaries.
+//	3) The user for which tlserver is being installed.
 //
 // Currently macOS only. In the case of an error, the last line printed to stderr will describe the
-// cause.
+// cause. Root permissions are required.
 package main
 
 import (
@@ -28,35 +29,34 @@ import (
 	"syscall"
 
 	"github.com/getlantern/trafficlog-flashlight/internal/exitcodes"
+	"github.com/getlantern/trafficlog-flashlight/internal/tlinstall"
 )
 
 const (
 	// This name is chosen to avoid conflict with existing Wireshark installations.
 	bpfGroup = "access_bpf"
 
-	// We define proper permissions as having user rwx and the setgid bit.
-	properBinPermissions = os.ModeSetgid | 0700
+	// tlserver needs the setgid bit to access the BPF devices.
+	tlserverPermissions = os.ModeSetgid | 0700
 
-	// The maximum number of BPF devices we will create, subject to system constraints.
-	maxCreatedDevices = 256
+	// config-bpf must be readable by all or we won't be able to check the contents in test mode.
+	configBPFPermissions = 0744
 
 	// Special values representing default values.
-	configBPFParentDir       = "<parent of config-bpf>"
-	configBPFPlistDirDefault = "~/Library/LaunchAgents"
+	configBPFPlistDirDefault = "/Library/LaunchDaemons"
 
 	configBPFLaunchdLabel = "org.getlantern.config-bpf"
 )
 
 var (
 	testMode          = flag.Bool("test", false, "make no changes, just check the current installation")
-	configBPFOutDir   = flag.String("config-bpf-out", configBPFParentDir, "directory to which stdout and stderr should be written")
 	configBPFPlistDir = flag.String("config-bpf-plist-dir", configBPFPlistDirDefault, "directory containing the plist file")
 )
 
 func init() {
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Usage:")
-		fmt.Fprintf(flag.CommandLine.Output(), "%s <options> [path/to/tlserver] [path/to/config-bpf] [user]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "%s <options> [path/to/install/dir] [path/to/resources/dir] [user]\n", os.Args[0])
 		fmt.Fprintln(flag.CommandLine.Output())
 		fmt.Fprintln(flag.CommandLine.Output(), "Options:")
 		flag.PrintDefaults()
@@ -150,6 +150,50 @@ func lastLine(b []byte) []byte {
 	return splits[len(splits)-1]
 }
 
+// In test mode, this simply checks to see if the contents differ. If dst does not exist &&
+// !testMode, it will be created with file mode 0644.
+func copyFile(src, dst string, testMode bool) error {
+	srcF, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", src, err)
+	}
+	defer srcF.Close()
+
+	dstFlag := os.O_RDWR | os.O_CREATE
+	if testMode {
+		// In test mode, we may not have write permissions and we don't want to create any files.
+		dstFlag = os.O_RDONLY
+	}
+	dstF, err := os.OpenFile(dst, dstFlag, 0644)
+	if testMode && os.IsNotExist(err) {
+		return exitcodes.ErrorFailedCheckf("%s does not exist", dst)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", dst, err)
+	}
+	defer dstF.Close()
+
+	srcContents, err := ioutil.ReadAll(srcF)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", src, err)
+	}
+	dstContents, err := ioutil.ReadAll(dstF)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", dst, err)
+	}
+	if bytes.Equal(srcContents, dstContents) {
+		return nil
+	}
+	if testMode {
+		return exitcodes.ErrorOutdated("contents differ")
+	}
+	if _, err := dstF.WriteAt(srcContents, 0); err != nil {
+		return fmt.Errorf("failed to write to %s: %w", dst, err)
+	}
+	return nil
+
+}
+
 // Assign the binary to the user and group, assign the specified permissions.
 func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode, testMode bool) error {
 	statT, ok := info.Sys().(*syscall.Stat_t)
@@ -169,7 +213,7 @@ func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode,
 	}
 	if binUID != userUID || binGID != bpfGID {
 		if testMode {
-			return exitcodes.ErrorFailedCheckf("not owned by %s and %s", u.Username, bpfGroup)
+			return exitcodes.ErrorFailedCheckf("not owned by %s and %s", u.Username, g.Name)
 		}
 		if err := os.Chown(info.path, userUID, bpfGID); err != nil {
 			return fmt.Errorf("failed to change ownership: %w", err)
@@ -198,22 +242,31 @@ func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode,
 	return nil
 }
 
-func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username string, testMode bool) error {
+func configure(installDir, resourcesDir, plistDir, username string, testMode bool) error {
+	rDir, err := tlinstall.NewResourcesDir(resourcesDir)
+	if err != nil {
+		return fmt.Errorf("failed to create resources dir reference: %w", err)
+	}
+
 	u, err := user.Lookup(username)
 	if err != nil {
 		return exitcodes.ErrorBadInput("failed to look up user", err)
 	}
-	tlserverInfo, err := stat(tlserver)
+	_, err = stat(rDir.Tlserver())
 	if err != nil {
-		return exitcodes.ErrorBadInput("failed to stat tlserver binary", err)
+		return exitcodes.ErrorBadInput("failed to stat new tlserver binary", err)
 	}
-	configBPFInfo, err := stat(configBPF)
+	_, err = stat(rDir.ConfigBPF())
 	if err != nil {
-		return exitcodes.ErrorBadInput("failed to stat config-bpf binary", err)
+		return exitcodes.ErrorBadInput("failed to stat new config-bpf binary", err)
 	}
-	configBPFOutDirInfo, err := stat(configBPFOutDir)
+	root, err := user.LookupId("0")
 	if err != nil {
-		return exitcodes.ErrorBadInput("failed to stat config-bpf output directory", err)
+		return fmt.Errorf("failed to look up super user (UID 0): %w", err)
+	}
+	wheel, err := user.LookupGroupId("0")
+	if err != nil {
+		return fmt.Errorf("failed to look up superuser group (GID 0): %w", err)
 	}
 
 	// Create the BPF group.
@@ -232,15 +285,56 @@ func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username
 		}
 	}
 
-	if err := configureBinary(*tlserverInfo, *u, *g, properBinPermissions, testMode); err != nil {
+	// In test mode, we track whether one of the binaries is outdated. If so, AND if there are no
+	// other failures, then we return exitcodes.OutdatedError.
+	var (
+		outdatedErr  *exitcodes.OutdatedError
+		outdatedFile string
+	)
+	isOutdatedError := func(err error, filename string) bool {
+		if errors.As(err, &outdatedErr) {
+			outdatedFile = filename
+			return true
+		}
+		return false
+	}
+
+	tlserverPath := filepath.Join(installDir, "tlserver")
+	configBPFPath := filepath.Join(installDir, "config-bpf")
+	err = copyFile(rDir.Tlserver(), tlserverPath, testMode)
+	if err != nil && !isOutdatedError(err, "tlserver") {
 		if testMode {
-			return fmt.Errorf("tlserver checks failed: %w", err)
+			return fmt.Errorf("tlserver content checks failed: %w", err)
+		}
+		return fmt.Errorf("failed to replace current tlserver binary: %w", err)
+	}
+	tlserverInfo, err := stat(tlserverPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat tlserver after copy: %w", err)
+	}
+	err = copyFile(rDir.ConfigBPF(), configBPFPath, testMode)
+	if err != nil && !isOutdatedError(err, "config-bpf") {
+		if testMode {
+			return fmt.Errorf("config-bpf content checks failed: %w", err)
+		}
+		return fmt.Errorf("failed to replace current config-bpf binary: %w", err)
+	}
+	configBPFInfo, err := stat(configBPFPath)
+	if err != nil {
+		return fmt.Errorf("failed to stat config-bpf after copy: %w", err)
+	}
+
+	if err := configureBinary(*tlserverInfo, *u, *g, tlserverPermissions, testMode); err != nil {
+		if testMode {
+			return fmt.Errorf("tlserver file info checks failed: %w", err)
 		}
 		return fmt.Errorf("failed to configure tlserver: %w", err)
 	}
-	if err := configureBinary(*configBPFInfo, *u, *g, properBinPermissions, testMode); err != nil {
+	// config-bpf is assigned to root/wheel because it is going to be configured to run as a global
+	// daemon. This way bad actors cannot just replace the binary and run an executable as root.
+	if err := configureBinary(*configBPFInfo, *root, *wheel, configBPFPermissions, testMode); err != nil {
 		if testMode {
-			return fmt.Errorf("config-bpf checks failed: %w", err)
+			return fmt.Errorf("config-bpf file info checks failed: %w", err)
 		}
 		return fmt.Errorf("failed to configure config-bpf: %w", err)
 	}
@@ -248,19 +342,21 @@ func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username
 	// Run config-bpf. Though we will be registering this to run on login, we want the system to be
 	// properly configured when tlconfig completes.
 	var exitErr *exec.ExitError
-	args := []string{}
+	path, args := configBPFInfo.path, []string{}
 	if testMode {
-		args = []string{"-test"}
+		// In test mode, we use the binary in the resources dir as we may not have executable
+		// permissions on the "standard" one.
+		path, args = rDir.ConfigBPF(), []string{"-test"}
 	}
-	out, err := exec.Command(configBPFInfo.path, args...).CombinedOutput()
+	out, err := exec.Command(path, args...).CombinedOutput()
 	if err != nil && errors.As(err, &exitErr) {
 		return exitcodes.ErrorFromCode(exitErr.ExitCode(), string(lastLine(out)))
 	} else if err != nil {
 		return fmt.Errorf("failed to run config-bpf: %w", err)
 	}
 
-	plistData := configBPFLaunchdPlistData(configBPFInfo.path, configBPFOutDirInfo.path)
-	plistDir := strings.Replace(configBPFPlistDir, "~", u.HomeDir, -1)
+	plistData := configBPFLaunchdPlistData(configBPFInfo.path, installDir)
+	plistDir = strings.Replace(plistDir, "~", u.HomeDir, -1)
 	plistFilename := fmt.Sprintf("%s/%s.plist", plistDir, configBPFLaunchdLabel)
 	if testMode {
 		actualData, err := ioutil.ReadFile(plistFilename)
@@ -279,6 +375,9 @@ func configure(tlserver, configBPF, configBPFOutDir, configBPFPlistDir, username
 		}
 	}
 
+	if outdatedErr != nil {
+		return fmt.Errorf("%s: %w", outdatedFile, outdatedErr)
+	}
 	return nil
 }
 
@@ -289,16 +388,12 @@ func main() {
 		flag.Usage()
 		os.Exit(exitcodes.BadInput)
 	}
-	tlserverPath, configBPFPath, username := args[0], args[1], args[2]
-	if *configBPFOutDir == configBPFParentDir || *configBPFOutDir == "" {
-		*configBPFOutDir = filepath.Dir(configBPFPath)
-	}
+	installDir, resourcesDir, username := args[0], args[1], args[2]
 	if *configBPFPlistDir == "" {
 		*configBPFPlistDir = configBPFPlistDirDefault
 	}
 
-	err := configure(
-		tlserverPath, configBPFPath, *configBPFOutDir, *configBPFPlistDir, username, *testMode)
+	err := configure(installDir, resourcesDir, *configBPFPlistDir, username, *testMode)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

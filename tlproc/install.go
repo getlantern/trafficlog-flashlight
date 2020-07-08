@@ -164,13 +164,20 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	// On macOS, elevate will obscure the exit code of the command, so we can't actually know if
 	// tlconfig ran successfully. We check manually by running again with -test.
 	output, err = tlconfig.run("-test")
-	if err != nil && errors.As(err, &exitErr) && exitErr.ExitCode() == exitcodes.FailedCheck {
+	if errors.As(err, &exitErr) {
+		outdated = exitErr.ExitCode() == exitcodes.Outdated
+		failedCheck = exitErr.ExitCode() == exitcodes.FailedCheck
+	} else {
+		outdated, failedCheck = false, false
+	}
+	switch {
+	case failedCheck, outdated && overwrite:
 		errMsg := "unexpected configuration failure"
 		if len(output) > 0 {
 			errMsg = fmt.Sprintf("%s: %s", errMsg, string(lastLine(output)))
 		}
 		return errors.New(errMsg)
-	} else if err != nil {
+	case err != nil:
 		errMsg := "unexpected failure running post-install check"
 		if len(output) > 0 {
 			errMsg = fmt.Sprintf("%s: %s", errMsg, string(lastLine(output)))

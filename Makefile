@@ -70,7 +70,7 @@ $(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver 
 		$(STAGING_DIR)
 
 test:
-	@go test -race -tags debug ./tlproc
+	@go test -race -tags debug ./tlproc -args -elevated
 
 clean:
 	@rm -r $(STAGING_DIR) 2> /dev/null || true

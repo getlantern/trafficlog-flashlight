@@ -36,8 +36,9 @@ const (
 	// This name is chosen to avoid conflict with existing Wireshark installations.
 	bpfGroup = "access_bpf"
 
-	// tlserver needs the setgid bit to access the BPF devices.
-	tlserverPermissions = os.ModeSetgid | 0700
+	// tlserver needs the setgid bit to access the BPF devices. We do not provide write permissions
+	// as this binary will be owned by the user.
+	tlserverPermissions = os.ModeSetgid | 0500
 
 	// config-bpf must be readable by all or we won't be able to check the contents in test mode.
 	configBPFPermissions = 0744

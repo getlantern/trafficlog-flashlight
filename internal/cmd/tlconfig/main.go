@@ -42,7 +42,8 @@ const (
 	// config-bpf must be readable by all or we won't be able to check the contents in test mode.
 	configBPFPermissions = 0744
 
-	// Special values representing default values.
+	// By default, config-bpf is installed as a global daemon. Overriding this is useful for
+	// testing, but probably not much else as the binary will be assigned to root/wheel regardless.
 	configBPFPlistDirDefault = "/Library/LaunchDaemons"
 
 	configBPFLaunchdLabel = "org.getlantern.config-bpf"
@@ -63,8 +64,8 @@ func init() {
 	}
 }
 
-// The config-bpf utility is installed as a launch agent. This template is filled according to
-// arguments provided at runtime, then placed in ~/Library/LaunchAgents.
+// The config-bpf utility is installed as a global daemon. This template is filled according to
+// arguments provided at runtime, then placed in configBPFPlistDir.
 const configBPFLaunchdTmpl = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -137,15 +138,7 @@ func (fi *fileInfo) refresh() error {
 }
 
 func lastLine(b []byte) []byte {
-	if len(b) == 0 {
-		return b
-	}
-	if b[0] == '\n' {
-		return lastLine(b[1:])
-	}
-	if b[len(b)-1] == '\n' {
-		return lastLine(b[:len(b)-1])
-	}
+	b = bytes.TrimSpace(b)
 	splits := bytes.Split(b, []byte{'\n'})
 	return splits[len(splits)-1]
 }
@@ -194,8 +187,8 @@ func copyFile(src, dst string, testMode bool) error {
 
 }
 
-// Assign the binary to the user and group, assign the specified permissions.
-func configureBinary(info fileInfo, u user.User, g user.Group, perm os.FileMode, testMode bool) error {
+// Assign the file to the user and group, assign the specified permissions.
+func configureFile(info fileInfo, u user.User, g user.Group, perm os.FileMode, testMode bool) error {
 	statT, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return fmt.Errorf("failed to obtain detailed stat info")
@@ -324,7 +317,7 @@ func configure(installDir, resourcesDir, plistDir, username string, testMode boo
 		return fmt.Errorf("failed to stat config-bpf after copy: %w", err)
 	}
 
-	if err := configureBinary(*tlserverInfo, *u, *g, tlserverPermissions, testMode); err != nil {
+	if err := configureFile(*tlserverInfo, *u, *g, tlserverPermissions, testMode); err != nil {
 		if testMode {
 			return fmt.Errorf("tlserver file info checks failed: %w", err)
 		}
@@ -332,7 +325,7 @@ func configure(installDir, resourcesDir, plistDir, username string, testMode boo
 	}
 	// config-bpf is assigned to root/wheel because it is going to be configured to run as a global
 	// daemon. This way bad actors cannot just replace the binary and run an executable as root.
-	if err := configureBinary(*configBPFInfo, *root, *wheel, configBPFPermissions, testMode); err != nil {
+	if err := configureFile(*configBPFInfo, *root, *wheel, configBPFPermissions, testMode); err != nil {
 		if testMode {
 			return fmt.Errorf("config-bpf file info checks failed: %w", err)
 		}

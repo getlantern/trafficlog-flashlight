@@ -1,9 +1,10 @@
 // Package tlproc provides a traffic log which runs in a separate process. This can be useful when
 // the parent process does not have proper permissions for packet capture.
 //
-// This package is currently macOS only. The parent process must be running code signed with the
-// com.getlantern.lantern identifier and a trusted anchor. Build with the tag 'debug' to create
-// traffic log processes which skip peer verification.
+// This package is currently macOS only. The parent process must be running code signed by Lantern.
+// Specifically, the certificate's subject common name must match that of the Innovate Labs
+// Developer ID Application certificate. Further, the certificate must be issued by Apple. Build
+// with the tag 'debug' to create traffic log processes which skip peer verification.
 package tlproc
 
 import (
@@ -101,9 +102,8 @@ type TrafficLogProcess struct {
 	closedMx sync.Mutex
 }
 
-// New traffic log process. The current process must be running code signed with the
-// "com.getlantern.lantern" identifier and a trusted anchor. execPath specifies the path to the
-// installation directory and should match the path previously provided to Install.
+// New traffic log process. The current process must be running code signed by Lantern (see the
+// package doc). The installation directory must match that provided to Install.
 //
 // Install must be invoked before the first call to New on a given machine. Installations persist
 // across runtimes.

@@ -1,6 +1,6 @@
 // Command tlserver starts a traffic log server. This server uses HTTP over Unix domain sockets and
 // authenticates peers using authipc. Specifically, peer processes must be running code signed with
-// the com.getlantern.lantern identifier and a trusted anchor. This server is macOS only.
+// the Lantern Developer ID Application certificate. See the tlproc package doc for more details.
 package main
 
 import (

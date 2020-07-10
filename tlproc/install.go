@@ -84,7 +84,7 @@ func (e tlconfigExec) elevate(prompt, icon string) tlconfigExec {
 // the new binary will not inherit permissions of the old binary.
 //
 // A second binary, config-bpf, is installed in the same directory and according to the same rules.
-// This binary is used to support a launchd user agent necessary for tlserver operation.
+// This binary is used to support a launchd global daemon necessary for tlserver operation.
 //
 // A PermissionError is returned when the user denies permission.
 func Install(dir, user, prompt, iconPath string, overwrite bool) error {

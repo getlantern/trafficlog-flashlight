@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"sync"
 
 	"github.com/getlantern/authipc"
@@ -128,6 +129,13 @@ func main() {
 		fail("failed to start authipc listener:", err)
 	}
 	defer l.Close()
+
+	sigC := make(chan os.Signal)
+	go func() {
+		<-sigC
+		os.Remove(*socketFile)
+	}()
+	signal.Notify(sigC, os.Interrupt, os.Kill)
 
 	fmt.Fprintln(os.Stdout, "Starting server at", l.Addr().String())
 	log.Fatal(s.Serve(loggingListener{l}))

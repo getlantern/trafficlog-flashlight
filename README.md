@@ -10,7 +10,7 @@ The primary output of this repository is the tlproc package. This package is use
 
 Currently, the flashlight client only interacts with the tlproc package. The tlproc package makes use of the more general trafficlog package to offer the functionality described above.
 
-To achieve this functionality, tlproc makes use of binaries embedded in internal/tlserverbin. These binaries are written in Go and can be found in internal/cmd. Currently, these commands are as follows:
+To achieve this functionality, tlproc makes use of binaries embedded in internal/tlserverbin. These binaries are written in Go and can be found in internal/cmd. Currently, these binaries are as follows:
  * tlserver   - the actual server run by the tlproc package
  * tlconfig   - used to configure the host when tlserver is installed
  * config-bpf - installed as a global daemon to configure the BPF devices on startup

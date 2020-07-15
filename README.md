@@ -17,7 +17,9 @@ To achieve this functionality, tlproc makes use of binaries embedded in internal
   
 For more information on each command, please refer to its Go doc.
 
-To embed the commands, we build each for the appropriate platform (currently only macOS), sign each, then package them up using [go-bindata](https://github.com/jteeuwen/go-bindata). We also include a 'debug' build of the tlserver binary which does not authenticate peer certificates (see the tlproc Go doc for more details). This is all handled in the Makefile and can be done by simply running `make`.
+# Building the Embedded Binaries
+
+To embed the commands, we build each for the appropriate platform (currently only macOS), sign each, then package them up using [go-bindata](https://github.com/jteeuwen/go-bindata). We also include a 'debug' build of the tlserver binary which does not authenticate peer certificates (see the tlproc Go doc for more details). This is all handled in the Makefile and can be done by simply running `make`. Note that you will need the private key for the Lantern certificate in order to sign the binaries. To build only the (unsigned) debugging binaries, run `make debug`.
 
 # Testing
 

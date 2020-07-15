@@ -12,7 +12,7 @@ CONFIG_BPF := $(STAGING_DIR)/unsigned/config-bpf
 CONFIG_BPF_SRCS := $(shell find internal/cmd/config-bpf -name "*.go") go.mod go.sum
 
 all: $(EMBED_DIR)/*
-.PHONY: test clean
+.PHONY: test clean debug
 
 define osxcodesign
 	codesign --options runtime --strict --timestamp --force \
@@ -68,6 +68,9 @@ $(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver 
 		-tags debug \
 		-ignore unsigned/* \
 		$(STAGING_DIR)
+
+# An alias for convenience.
+debug: $(EMBED_DIR)/tlsb_debug_darwin_amd64.go
 
 test:
 	@go test -race -tags debug ./tlproc -args -elevated

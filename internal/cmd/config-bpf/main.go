@@ -1,10 +1,14 @@
 // Command config-bpf is used to configure the BPF devices on a machine. It is macOS-specific. In
 // the case of an error, the last line printed to stderr will describe the cause.
 //
-// This utility is intended to be (1) run by tlconfig on install and (2) configured as a launchd
-// global daemon to run on startup. In the second case, stdout and stderr can be redirected using
-// the launchd plist file. However, the files should be provided to this utility as well so that we
-// can manage the size of these files. Otherwise, launchd will allow them to grow unbounded.
+// For context, tlserver needs access to the BPF devices to perform packet capture. We can configure
+// these devices accordingly, but this configuration is reset when the host restarts. Thus, this
+// utility is (1) run by tlconfig on install and (2) configured as a launchd global daemon to be run
+// on startup.
+//
+// When run as a daemon, stdout and stderr can be redirected using the launchd plist file. However,
+// the files should be provided to this utility as well so that we can manage their size. Otherwise,
+// launchd will allow them to grow unbounded.
 //
 // Much of the logic and reasoning is based on Wireshark's ChmodBPF utility.
 package main

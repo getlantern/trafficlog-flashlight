@@ -40,6 +40,8 @@ var (
 	testMode   = flag.Bool("test", false, "make no changes, just check the current installation")
 	stdoutFile = flag.String("stdout", "", "path to the launchd stdout file for this utility")
 	stderrFile = flag.String("stderr", "", "path to the launchd stderr file for this utility")
+	plistFile  = flag.String("plist", "", "path to the launchd plist file")
+	sentinel   = flag.String("sentinel", "", "if sentinel does not exist and plist was provided, config-bpf removes itself")
 
 	bpfDeviceRegexp = regexp.MustCompile("^/dev/bpf([0-9]+)$")
 )
@@ -83,6 +85,19 @@ func main() {
 	if *stdoutFile != "" {
 		if _, err := os.Create(*stdoutFile); err != nil {
 			fmt.Fprintln(os.Stderr, "failed to truncate stdout file")
+		}
+	}
+
+	if *sentinel != "" && *plistFile != "" {
+		if _, err := os.Stat(*sentinel); os.IsNotExist(err) {
+			fmt.Fprintln(os.Stderr, "sentinel missing; performing self-removal and deleting plist file")
+			if err := os.Remove(*plistFile); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to remove plist file:", err)
+			}
+			if err := os.Remove(os.Args[0]); err != nil {
+				fmt.Fprintln(os.Stderr, "failed to remove self:", err)
+			}
+			os.Exit(0)
 		}
 	}
 

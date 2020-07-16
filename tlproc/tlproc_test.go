@@ -31,7 +31,8 @@ func TestTrafficLogProcess(t *testing.T) {
 
 	u, err := user.Current()
 	require.NoError(t, err)
-	require.NoError(t, Install(path, u.Username, installPrompt, "", false))
+	opts := &InstallOptions{UninstallSentinel: "test-install"}
+	require.NoError(t, Install(path, u.Username, installPrompt, "", opts))
 
 	tl, err := New(captureBufferSize, saveBufferSize, path, nil)
 	require.NoError(t, err)

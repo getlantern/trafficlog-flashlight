@@ -71,6 +71,36 @@ func (e tlconfigExec) elevate(prompt, icon string) tlconfigExec {
 	return tlconfigExec{e.Exec, e.args, prompt, icon}
 }
 
+// InstallOptions are used to specify optional parameters to Install.
+type InstallOptions struct {
+	// Overwrite specifies whether to force overwriting of the server binary. If the binary already
+	// exists in the input directory, but is outdated, it will be overwritten iff Overwrite is true.
+	// Note that this will result in the user being re-prompted for permissions as the new binary
+	// will not inherit permissions of the old binary.
+	Overwrite bool
+
+	// UninstallSentinel is a file whose absence indicates that the traffic log server should be
+	// uninstalled.
+	//
+	// To be more specific, on macOS, the config-bpf global daemon checks for the existence of this
+	// file on each run (at system start). If config-bpf does not find the sentinel file, config-bpf
+	// will delete itself and its launchd plist file.
+	//
+	// Defaults to the path to the current program (os.Executable).
+	UninstallSentinel string
+}
+
+func (opts InstallOptions) uninstallSentinel() (string, error) {
+	if opts.UninstallSentinel != "" {
+		return opts.UninstallSentinel, nil
+	}
+	ex, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("failed to get path to executable")
+	}
+	return ex, nil
+}
+
 // Install the traffic log server. This package is currently macOS only; calls to Install on other
 // platforms will result in an error.
 //
@@ -79,17 +109,22 @@ func (e tlconfigExec) elevate(prompt, icon string) tlconfigExec {
 // system changes are necessary, the prompt and icon will be used to ask the user for elevated
 // permissions. Otherwise, this function is a no-op.
 //
-// If the binary already exists in the input directory, but is outdated, it will be overwritten iff
-// overwrite is true. Note that this will result in the user being re-prompted for permissions as
-// the new binary will not inherit permissions of the old binary.
-//
-// A second binary, config-bpf, is installed in the same directory and according to the same rules.
-// This binary is used to support a launchd global daemon necessary for tlserver operation.
+// In addition to the server binary, a second binary, config-bpf, is installed in the same directory
+// and according to the same rules. This binary is used to support a launchd global daemon necessary
+// for tlserver operation.
 //
 // A PermissionError is returned when the user denies permission.
-func Install(dir, user, prompt, iconPath string, overwrite bool) error {
+func Install(dir, user, prompt, iconPath string, opts *InstallOptions) error {
 	if runtime.GOOS != "darwin" {
 		return errors.New("unsupported platform")
+	}
+
+	if opts == nil {
+		opts = &InstallOptions{}
+	}
+	uninstallSentinel, err := opts.uninstallSentinel()
+	if err != nil {
+		return fmt.Errorf("failed to get uninstall sentinel: %w", err)
 	}
 
 	resourcesPath, err := ioutil.TempDir("", "lantern-tmp-resources")
@@ -121,7 +156,7 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to load tlconfig: %w", err)
 	}
-	tlconfig.setArgs(dir, resourcesPath, user)
+	tlconfig.setArgs(dir, resourcesPath, uninstallSentinel, user)
 
 	// Check existing system configuration.
 	var (
@@ -134,13 +169,13 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 		failedCheck = exitErr.ExitCode() == exitcodes.FailedCheck
 	}
 	switch {
-	case failedCheck, outdated && overwrite:
+	case failedCheck, outdated && opts.Overwrite:
 		log.Debugf("tlconfig found changes necessary: %s", string(fmtOutputForLog(output)))
-	case err == nil, outdated && !overwrite:
+	case err == nil, outdated && !opts.Overwrite:
 		if len(output) > 0 {
 			log.Debugf(
 				"tlconfig found no necessary changes (overwrite=%t); output: %s",
-				overwrite, string(fmtOutputForLog(output)))
+				opts.Overwrite, string(fmtOutputForLog(output)))
 		} else {
 			log.Debug("tlconfig found no necessary changes")
 		}
@@ -171,7 +206,7 @@ func Install(dir, user, prompt, iconPath string, overwrite bool) error {
 		outdated, failedCheck = false, false
 	}
 	switch {
-	case failedCheck, outdated && overwrite:
+	case failedCheck, outdated && opts.Overwrite:
 		errMsg := "unexpected configuration failure"
 		if len(output) > 0 {
 			errMsg = fmt.Sprintf("%s: %s", errMsg, string(lastLine(output)))

@@ -5,10 +5,12 @@
 //	- Setting up config-bpf as a launchd global daemon so that it will run on startup as root.
 //
 // Three arguments are expected:
-//	1) The path to the installation directory.
-//	2) The path to a directory containing install resources. Specifically, this directory should
+//  1) The path to the installation directory.
+//  2) The path to a directory containing install resources. Specifically, this directory should
 //     contain the tlserver and config-bpf binaries.
-//	3) The user for which tlserver is being installed.
+//  3) The path to a sentinel file for config-bpf. If this file disappears, config-bpf will remove
+//     itself and its plist file on its next run.
+//  4) The user for which tlserver is being installed.
 //
 // Currently macOS only. In the case of an error, the last line printed to stderr will describe the
 // cause. Root permissions are required.
@@ -58,7 +60,7 @@ var (
 func init() {
 	flag.Usage = func() {
 		fmt.Fprintln(flag.CommandLine.Output(), "Usage:")
-		fmt.Fprintf(flag.CommandLine.Output(), "%s <options> [path/to/install/dir] [path/to/resources/dir] [user]\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "%s <options> [path/to/install-dir] [path/to/resources-dir] [path/to/uninstall-sentinel] [user]\n", os.Args[0])
 		fmt.Fprintln(flag.CommandLine.Output())
 		fmt.Fprintln(flag.CommandLine.Output(), "Options:")
 		flag.PrintDefaults()
@@ -80,6 +82,10 @@ const configBPFLaunchdTmpl = `<?xml version="1.0" encoding="UTF-8"?>
 			<string>%s/config-bpf.stdout</string>
 			<string>-stderr</string>
 			<string>%s/config-bpf.stderr</string>
+			<string>-plist</string>
+			<string>%s</string>
+			<string>-sentinel</string>
+			<string>%s</string>
 		</array>
 		<key>RunAtLoad</key>
 		<true/>
@@ -90,9 +96,9 @@ const configBPFLaunchdTmpl = `<?xml version="1.0" encoding="UTF-8"?>
 	</dict>
 </plist>`
 
-func configBPFLaunchdPlistData(configBPFAbsPath, outDir string) []byte {
+func configBPFLaunchdPlistData(configBPFAbsPath, plist, sentinel, outDir string) []byte {
 	return []byte(fmt.Sprintf(configBPFLaunchdTmpl,
-		configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir, outDir, outDir,
+		configBPFLaunchdLabel, configBPFAbsPath, outDir, outDir, plist, sentinel, outDir, outDir,
 	))
 }
 
@@ -236,7 +242,7 @@ func configureFile(info fileInfo, u user.User, g user.Group, perm os.FileMode, t
 	return nil
 }
 
-func configure(installDir, resourcesDir, plistDir, username string, testMode bool) error {
+func configure(installDir, resourcesDir, plistDir, sentinel, username string, testMode bool) error {
 	rDir, err := tlinstall.NewResourcesDir(resourcesDir)
 	if err != nil {
 		return fmt.Errorf("failed to create resources dir reference: %w", err)
@@ -253,6 +259,10 @@ func configure(installDir, resourcesDir, plistDir, username string, testMode boo
 	_, err = stat(rDir.ConfigBPF())
 	if err != nil {
 		return exitcodes.ErrorBadInput("failed to stat new config-bpf binary", err)
+	}
+	sentinelInfo, err := stat(sentinel)
+	if err != nil {
+		return exitcodes.ErrorBadInput("failed to stat sentinel file", err)
 	}
 	root, err := user.LookupId("0")
 	if err != nil {
@@ -349,9 +359,10 @@ func configure(installDir, resourcesDir, plistDir, username string, testMode boo
 		return fmt.Errorf("failed to run config-bpf: %w", err)
 	}
 
-	plistData := configBPFLaunchdPlistData(configBPFInfo.path, installDir)
 	plistDir = strings.Replace(plistDir, "~", u.HomeDir, -1)
 	plistFilename := fmt.Sprintf("%s/%s.plist", plistDir, configBPFLaunchdLabel)
+	plistData := configBPFLaunchdPlistData(
+		configBPFInfo.path, plistFilename, sentinelInfo.path, installDir)
 	if testMode {
 		actualData, err := ioutil.ReadFile(plistFilename)
 		if os.IsNotExist(err) {
@@ -382,12 +393,12 @@ func main() {
 		flag.Usage()
 		os.Exit(exitcodes.BadInput)
 	}
-	installDir, resourcesDir, username := args[0], args[1], args[2]
+	installDir, resourcesDir, sentinel, username := args[0], args[1], args[2], args[3]
 	if *configBPFPlistDir == "" {
 		*configBPFPlistDir = configBPFPlistDirDefault
 	}
 
-	err := configure(installDir, resourcesDir, *configBPFPlistDir, username, *testMode)
+	err := configure(installDir, resourcesDir, *configBPFPlistDir, sentinel, username, *testMode)
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {

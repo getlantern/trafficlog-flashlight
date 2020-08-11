@@ -5,6 +5,11 @@ BIN_DIR := $(TLSERVER_DIR)/binaries
 EMBED_DIR := internal/tlserverbin
 STAGING_DIR := build-staging
 
+# Run the tests are run for the first time, a test installation is made into this directory. The
+# user will be prompted for permissions. This directory is not removed by the clean target to avoid
+# re-prompting for permissions.
+TEST_INSTALL_DIR := tlproc/test-install
+
 # tlconfig and config-bpf are only built for macOS.
 TLCONFIG := $(STAGING_DIR)/unsigned/tlconfig
 TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/exitcodes -name "*.go") go.mod go.sum
@@ -24,6 +29,9 @@ endef
 $(STAGING_DIR):
 	@mkdir $(STAGING_DIR) 2> /dev/null | true
 	@mkdir $(STAGING_DIR)/unsigned 2> /dev/null | true
+
+$(TEST_INSTALL_DIR):
+	@mkdir $(TEST_INSTALL_DIR) 2> /dev/null | true
 
 $(TLCONFIG): $(TLCONFIG_SRCS) $(STAGING_DIR)
 	GOOS=darwin GOARCH=amd64 go build -o $(TLCONFIG) ./internal/cmd/tlconfig
@@ -72,7 +80,7 @@ $(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver 
 # An alias for convenience.
 debug: $(EMBED_DIR)/tlsb_debug_darwin_amd64.go
 
-test:
+test: $(TEST_INSTALL_DIR)
 	@go test -race -tags debug ./tlproc -args -elevated
 
 clean:

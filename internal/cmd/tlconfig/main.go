@@ -213,7 +213,7 @@ func configureFile(info fileInfo, u user.User, g user.Group, perm os.FileMode, t
 	}
 	if binUID != userUID || binGID != bpfGID {
 		if testMode {
-			return exitcodes.ErrorFailedCheckf("not owned by %s and %s", u.Username, g.Name)
+			return exitcodes.ErrorFailedCheckf("not owned by %s (%d) and %s (%d), owned by %d and %d", u.Username, userUID, g.Name, bpfGID, binUID, binGID)
 		}
 		if err := os.Chown(info.path, userUID, bpfGID); err != nil {
 			return fmt.Errorf("failed to change ownership: %w", err)

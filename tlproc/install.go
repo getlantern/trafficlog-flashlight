@@ -102,7 +102,7 @@ func (opts InstallOptions) uninstallSentinel() (string, error) {
 }
 
 // Install the traffic log server. This package is currently macOS only; calls to Install on other
-// platforms will result in an error.
+// platforms will result in an error. The install directory will be created if necessary.
 //
 // This function first checks to see if the server binary is already installed in the given
 // directory and if the necessary system changes have already been made. If installation or any
@@ -125,6 +125,13 @@ func Install(dir, user, prompt, iconPath string, opts *InstallOptions) error {
 	uninstallSentinel, err := opts.uninstallSentinel()
 	if err != nil {
 		return fmt.Errorf("failed to get uninstall sentinel: %w", err)
+	}
+
+	_, err = os.Stat(dir)
+	if os.IsNotExist(err) {
+		if err := os.Mkdir(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create install directory: %w", err)
+		}
 	}
 
 	resourcesPath, err := ioutil.TempDir("", "lantern-tmp-resources")

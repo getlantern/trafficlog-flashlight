@@ -12,7 +12,7 @@ jobs:
                     sudo mkdir /usr/local/go
                     curl -sSL "https://golang.org/dl/go1.14.7.darwin-amd64.tar.gz" | sudo tar -xz -C /usr/local/
                     echo "BASH_ENV: " $BASH_ENV
-                    echo “export PATH=$PATH:/usr/local/go/bin” >> $BASH_ENV
+                    echo export PATH=$PATH:/usr/local/go/bin >> $BASH_ENV
                     cat $BASH_ENV
                     sudo chown -R $(whoami): /usr/local/go
             - run:

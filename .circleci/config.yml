@@ -13,6 +13,7 @@ jobs:
                     curl -sSL "https://golang.org/dl/go1.14.7.darwin-amd64.tar.gz" | sudo tar -xz -C /usr/local/
                     echo “export PATH=$PATH:/usr/local/go/bin” >> $BASH_ENV
                     sudo chown -R $(whoami): /usr/local/go
+                    echo $PATH
                     go version
             - run:
                 # The tests can be run locally without root, but there is a one-time prompt. We use

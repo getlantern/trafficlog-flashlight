@@ -3,6 +3,7 @@ jobs:
     test:
         macos:
             Go: 1.13
+            xcode: 11.6.0
         steps:
             - checkout
             - run:
@@ -10,7 +11,7 @@ jobs:
                 # sudo on the CI machine to skip the prompt.
                 name: Test
                 command: sudo -E make test
-                
+
 workflows:
     version: 2
     test-workflow:

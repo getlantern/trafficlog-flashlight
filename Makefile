@@ -21,6 +21,9 @@ define osxcodesign
 		$(1)
 endef
 
+require-go-bindata:
+	@which go-bindata || go install github.com/jteeuwen/go-bindata/go-bindata
+
 $(STAGING_DIR):
 	@mkdir $(STAGING_DIR) 2> /dev/null | true
 	@mkdir $(STAGING_DIR)/unsigned 2> /dev/null | true
@@ -45,7 +48,7 @@ $(BIN_DIR)/debug/darwin/amd64/tlserver: $(TLSERVER_SRCS)
 		-tags debug \
 		./$(TLSERVER_DIR)
 
-$(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG) $(CONFIG_BPF)
+$(EMBED_DIR)/tlsb_darwin_amd64.go: require-go-bindata $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG) $(CONFIG_BPF)
 	@cp $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DIR)
 	@cp $(TLCONFIG) $(STAGING_DIR)
 	@cp $(CONFIG_BPF) $(STAGING_DIR)
@@ -60,7 +63,7 @@ $(EMBED_DIR)/tlsb_darwin_amd64.go: $(BIN_DIR)/darwin/amd64/tlserver $(STAGING_DI
 		-ignore unsigned/* \
 		$(STAGING_DIR)
 
-$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG) $(CONFIG_BPF)
+$(EMBED_DIR)/tlsb_debug_darwin_amd64.go: require-go-bindata $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR) $(TLCONFIG) $(CONFIG_BPF)
 	@cp $(BIN_DIR)/debug/darwin/amd64/tlserver $(STAGING_DIR)
 	@cp $(TLCONFIG) $(STAGING_DIR)
 	@cp $(CONFIG_BPF) $(STAGING_DIR)

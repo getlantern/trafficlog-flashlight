@@ -10,3 +10,9 @@ jobs:
                 # sudo on the CI machine to skip the prompt.
                 name: Test
                 command: sudo -E make test
+                
+workflows:
+    version: 2
+    test-workflow:
+        jobs:
+        - test

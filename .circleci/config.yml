@@ -2,7 +2,8 @@ version: 2
 jobs:
     test:
         macos:
-            Go: 1.13
+            xcode: 11.3.0 # debugging
+            # Go: 1.13
         steps:
             -checkout
             -run:

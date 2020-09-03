@@ -1,0 +1,11 @@
+version: 2
+jobs:
+    test:
+        macos:
+            Go: 1.13
+        steps:
+            -checkout
+            -run:
+                # The tests can be run locally without root, but there is a one-time prompt. We use
+                # sudo on the CI machine to skip the prompt.
+                sudo -E make test

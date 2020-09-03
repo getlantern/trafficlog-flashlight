@@ -11,15 +11,8 @@ jobs:
                 command: |
                     sudo mkdir /usr/local/go
                     curl -sSL "https://golang.org/dl/go1.14.7.darwin-amd64.tar.gz" | sudo tar -xz -C /usr/local/
-                    echo "BASH_ENV: " $BASH_ENV
-                    echo export PATH=$PATH:/usr/local/go/bin >> $BASH_ENV
-                    cat $BASH_ENV
                     sudo chown -R $(whoami): /usr/local/go
-            - run:
-                name: Check for Go
-                command: |
-                    echo $PATH
-                    go version
+                    echo export PATH=$PATH:/usr/local/go/bin >> $BASH_ENV
             - run:
                 # The tests can be run locally without root, but there is a one-time prompt. We use
                 # sudo on the CI machine to skip the prompt.

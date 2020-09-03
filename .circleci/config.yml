@@ -2,11 +2,10 @@ version: 2
 jobs:
     test:
         macos:
-            xcode: 11.3.0 # debugging
-            # Go: 1.13
+            Go: 1.13
         steps:
-            -checkout
-            -run:
+            - checkout
+            - run:
                 # The tests can be run locally without root, but there is a one-time prompt. We use
                 # sudo on the CI machine to skip the prompt.
                 name: Test

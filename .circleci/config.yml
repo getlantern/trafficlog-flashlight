@@ -9,10 +9,10 @@ jobs:
             - run:
                 name: Install Go
                 command: |
-                    sudo mkdir /usr/local/Go
-                    sudo chown -R $(whoami): /usr/local/go
+                    sudo mkdir /usr/local/go
                     curl -sSL "https://golang.org/dl/go1.14.7.darwin-amd64.tar.gz" | sudo tar -xz -C /usr/local/
-                    echo “export PATH=$PATH:/usr/local/go/bin” >> BASH_ENV sudo chown -R (whoami): /usr/local/go
+                    echo “export PATH=$PATH:/usr/local/go/bin” >> BASH_ENV
+                    sudo chown -R $(whoami): /usr/local/go
             - run:
                 # The tests can be run locally without root, but there is a one-time prompt. We use
                 # sudo on the CI machine to skip the prompt.

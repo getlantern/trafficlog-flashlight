@@ -25,3 +25,7 @@ To embed the commands, we build each for the appropriate platform (currently onl
 
 To run the tests, call `make test`. The first time the tests are run on a host, a test-installation is performed in the tlproc directory. You will need to grant permissions for this. Subsequent tests will not need permissions. Your system BPF devices will be re-configured, but this should not have any adverse effects. Notably, the BPF devices are configured in a manner friendly to any existing Wireshark installations.
 
+# Git LFS and Go Modules
+
+Be aware that this project uses [Git LFS](https://git-lfs.github.com/). Any projects which pull `trafficlog-flashlight` in as a dependency (via Go modules) will also require Git LFS. CI servers running builds for such projects will also require Git LFS or the Go command will report checksum mismatches. This is because the contents of `trafficlog-flashlight` will differ if downloaded without Git LFS.
+

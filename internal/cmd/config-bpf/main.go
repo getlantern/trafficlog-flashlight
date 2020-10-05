@@ -76,6 +76,9 @@ func triggerNextBPFDevice(currentDevice int) error {
 func main() {
 	flag.Parse()
 
+	// TODO: delete me
+	fmt.Println("this is to change the md5")
+
 	// If the stdout and stderr files have been provided, clear old data by truncating.
 	if *stderrFile != "" {
 		if _, err := os.Create(*stderrFile); err != nil {

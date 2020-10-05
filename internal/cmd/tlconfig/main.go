@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/md5"
 	"errors"
 	"flag"
 	"fmt"
@@ -185,7 +186,9 @@ func copyFile(src, dst string, testMode bool) error {
 		return nil
 	}
 	if testMode {
-		return exitcodes.ErrorOutdated("contents differ")
+		// return exitcodes.ErrorOutdated("contents differ")
+		srcMD5, dstMD5 := md5.Sum(srcContents), md5.Sum(dstContents)
+		return exitcodes.ErrorOutdated(fmt.Sprintf("contents differ; src: %x; dst: %x", srcMD5, dstMD5))
 	}
 	if _, err := dstF.WriteAt(srcContents, 0); err != nil {
 		return fmt.Errorf("failed to write to %s: %w", dst, err)

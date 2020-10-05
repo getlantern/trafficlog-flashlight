@@ -91,6 +91,9 @@ func main() {
 		fail("save-bytes must be provided")
 	}
 
+	// TODO: delete me
+	fmt.Println("this is to change the md5")
+
 	var mutator trafficlog.MutatorFactory = new(trafficlog.NoOpFactory)
 	if *stripAppLayer {
 		mutator = new(trafficlog.AppStripperFactory)

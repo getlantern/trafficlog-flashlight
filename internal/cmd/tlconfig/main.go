@@ -187,11 +187,16 @@ func copyFile(src, dst string, testMode bool) error {
 	if testMode {
 		return exitcodes.ErrorOutdated("contents differ")
 	}
-	if _, err := dstF.WriteAt(srcContents, 0); err != nil {
-		return fmt.Errorf("failed to write to %s: %w", dst, err)
+
+	// Simply overwriting a signed file seems to upset macOS (probably Gatekeeper). Removing the
+	// destination file and writing a new one works though.
+	if err := os.Remove(dst); err != nil {
+		return fmt.Errorf("failed to remove old file: %w", err)
+	}
+	if err := ioutil.WriteFile(dst, srcContents, 0644); err != nil {
+		return fmt.Errorf("failed to write new contents: %w", err)
 	}
 	return nil
-
 }
 
 // Assign the file to the user and group, assign the specified permissions.

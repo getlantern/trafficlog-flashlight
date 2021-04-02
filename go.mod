@@ -1,6 +1,6 @@
 module github.com/getlantern/trafficlog-flashlight
 
-go 1.13
+go 1.15
 
 require (
 	github.com/KyleBanks/depth v1.2.1

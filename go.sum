@@ -25,8 +25,8 @@ github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55/go.mod h1:6mmzY2
 github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f/go.mod h1:D5ao98qkA6pxftxoqzibIBBrLSUli+kYnJqrgBf9cIA=
 github.com/getlantern/ops v0.0.0-20200403153110-8476b16edcd6 h1:QthAQCekS1YOeYWSvoHI6ZatlG4B+GBDLxV/2ZkBsTA=
 github.com/getlantern/ops v0.0.0-20200403153110-8476b16edcd6/go.mod h1:D5ao98qkA6pxftxoqzibIBBrLSUli+kYnJqrgBf9cIA=
-github.com/getlantern/trafficlog v1.0.0 h1:JYCcTptI7kKXjvppdE5JQPx31m/78Q1xbXpIM6X0rXc=
-github.com/getlantern/trafficlog v1.0.0/go.mod h1:oaj53OJ67FEPsiKbQBz2dpYCnh8Yq4bBbww3C6vMgAQ=
+github.com/getlantern/trafficlog v1.0.1 h1:eh8XzV4x2z+r7RHKFXJQrhrLtvnidlm83MAPRgrz+/I=
+github.com/getlantern/trafficlog v1.0.1/go.mod h1:tGZtzBjGPecw/t+z+K9CQsCrFfHBh4aOCt70crGL6AI=
 github.com/go-stack/stack v1.8.0 h1:5SgMzNM5HxrEjV0ww2lTmX6E2Izsfxas4+YHWRs3Lsk=
 github.com/go-stack/stack v1.8.0/go.mod h1:v0f6uXyyMGvRgIKkXu+yp6POWl0qKG85gN/melR3HDY=
 github.com/google/gopacket v1.1.17 h1:rMrlX2ZY2UbvT+sdz3+6J+pp2z+msCq9MxTU6ymxbBY=

@@ -1,3 +1,4 @@
 internal/cmd/tlserver/binaries
 tlproc/test-install
 build-staging
+profile.cov

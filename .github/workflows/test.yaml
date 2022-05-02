@@ -22,9 +22,9 @@ jobs:
       run: |
           git config --global url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
     # The tests run as root (see below). Writing dependencies to Go's mod cache as root can create
-    # issues, so we manually download dependencies first via 'go mod tidy'.
+    # issues, so we manually download dependencies first via 'go mod vendor'.
     - name: Download dependencies
-      run: go mod tidy
+      run: go mod vendor
     # The tests can be run locally without root, but there is a one-time prompt. We use sudo on the
     # CI machine to skip the prompt.
     - name: Run unit tests

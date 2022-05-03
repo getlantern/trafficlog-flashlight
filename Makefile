@@ -11,8 +11,6 @@ TLCONFIG_SRCS := $(shell find internal/cmd/tlconfig internal/exitcodes -name "*.
 CONFIG_BPF := $(STAGING_DIR)/unsigned/config-bpf
 CONFIG_BPF_SRCS := $(shell find internal/cmd/config-bpf -name "*.go") go.mod go.sum
 
-args = $(foreach a,$($(subst -,_,$1)_args),$(if $(value $a),$a="$($a)"))
-
 all: $(EMBED_DIR)/*
 .PHONY: test clean debug
 

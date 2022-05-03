@@ -1,0 +1,37 @@
+name: Build and Test
+
+on:
+  - push
+  - pull_request
+
+jobs:
+
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+          lfs: true
+    - name: Checkout LFS objects
+      run: git lfs checkout
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.18
+    - name: Granting private modules access
+      run: |
+          git config --global url."https://${{ secrets.GH_TOKEN }}:x-oauth-basic@github.com/".insteadOf "https://github.com/"
+    # The tests run as root (see below). Writing dependencies to Go's mod cache as root can create
+    # issues, so we manually download dependencies first via 'go mod vendor'.
+    - name: Download dependencies
+      run: go mod vendor
+    # The tests can be run locally without root, but there is a one-time prompt. We use sudo on the
+    # CI machine to skip the prompt.
+    - name: Run unit tests
+      run: sudo -E make test
+    - name: Install goveralls
+      run: go install github.com/mattn/goveralls@latest
+    - name: Send coverage
+      env:
+        COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: goveralls -coverprofile=profile.cov -service=github

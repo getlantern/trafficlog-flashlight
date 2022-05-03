@@ -79,7 +79,7 @@ $(EMBED_DIR)/tlsb_debug_darwin_amd64.go: require-go-bindata $(BIN_DIR)/debug/dar
 debug: $(EMBED_DIR)/tlsb_debug_darwin_amd64.go
 
 test:
-	@go test -race -tags debug ./tlproc -args -elevated
+	@go test -race -tags debug -coverprofile=profile.cov ./tlproc -args -elevated
 
 clean:
 	@rm -r $(STAGING_DIR) 2> /dev/null || true
